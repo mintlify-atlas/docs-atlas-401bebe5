@@ -1,0 +1,197 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "SQLAlchemy",
+  "projectDescription": "The Python SQL Toolkit and Object Relational Mapper that gives developers the full power and flexibility of SQL.",
+  "theme": "sequoia",
+  "primaryColor": "#BB4444",
+  "lightColor": "#DD6666",
+  "darkColor": "#992222",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Tutorials",
+            "pages": [
+              "tutorials/overview",
+              "tutorials/unified-tutorial",
+              "tutorials/orm-data-manipulation",
+              "tutorials/orm-queries",
+              "tutorials/orm-related-objects"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/engine",
+              "concepts/connections",
+              "concepts/metadata",
+              "concepts/schema"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "ORM",
+        "groups": [
+          {
+            "group": "ORM Essentials",
+            "pages": [
+              "orm/overview",
+              "orm/declarative-config",
+              "orm/mapped-classes",
+              "orm/relationships"
+            ]
+          },
+          {
+            "group": "ORM Sessions",
+            "pages": [
+              "orm/session-basics",
+              "orm/session-api",
+              "orm/session-state"
+            ]
+          },
+          {
+            "group": "ORM Querying",
+            "pages": [
+              "orm/query-guide",
+              "orm/queryable-attributes",
+              "orm/loading-techniques"
+            ]
+          },
+          {
+            "group": "Advanced ORM",
+            "pages": [
+              "orm/inheritance-mapping",
+              "orm/extensions",
+              "orm/events"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Core SQL",
+        "groups": [
+          {
+            "group": "SQL Expression Language",
+            "pages": [
+              "core/overview",
+              "core/expression-api",
+              "core/selects",
+              "core/inserts-updates-deletes"
+            ]
+          },
+          {
+            "group": "Schema Definition",
+            "pages": [
+              "core/schema-table",
+              "core/schema-constraints",
+              "core/schema-ddl"
+            ]
+          },
+          {
+            "group": "Data Types",
+            "pages": [
+              "core/types-overview",
+              "core/types-standard",
+              "core/types-custom"
+            ]
+          },
+          {
+            "group": "Engine & Connections",
+            "pages": [
+              "core/engines",
+              "core/connections",
+              "core/pooling"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Dialects",
+        "groups": [
+          {
+            "group": "Database Support",
+            "pages": [
+              "dialects/overview",
+              "dialects/postgresql",
+              "dialects/mysql",
+              "dialects/sqlite",
+              "dialects/oracle",
+              "dialects/mssql"
+            ]
+          },
+          {
+            "group": "Dialect Development",
+            "pages": [
+              "dialects/custom-dialects",
+              "dialects/type-migration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API Documentation",
+            "pages": [
+              "api/index",
+              "api/orm",
+              "api/core",
+              "api/engine",
+              "api/schema",
+              "api/types",
+              "api/pool",
+              "api/dialects",
+              "api/events"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Industrial strength ORM with identity map, unit of work, and data mapper patterns",
+    "Comprehensive SQL expression language for building queries programmatically",
+    "Connection pooling and database introspection",
+    "Support for PostgreSQL, MySQL, SQLite, Oracle, and Microsoft SQL Server",
+    "Advanced querying with eager loading, lazy loading, and subquery optimization",
+    "Schema reflection and generation with metadata system"
+  ],
+  "publicApiSurface": [
+    "create_engine",
+    "Engine",
+    "Connection",
+    "MetaData",
+    "Table",
+    "Column",
+    "select",
+    "insert",
+    "update",
+    "delete",
+    "Session",
+    "declarative_base",
+    "DeclarativeBase",
+    "relationship",
+    "mapped_column",
+    "Query",
+    "Mapper",
+    "inspect",
+    "func",
+    "and_",
+    "or_",
+    "not_",
+    "text",
+    "bindparam"
+  ]
+}
