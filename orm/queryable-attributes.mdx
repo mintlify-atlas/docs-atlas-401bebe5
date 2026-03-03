@@ -1,0 +1,570 @@
+---
+title: Queryable Attributes
+description: Working with mapped class attributes for querying, filtering, and comparisons
+---
+
+Queryable attributes are the mapped class attributes that provide the interface for constructing query expressions in SQLAlchemy. Understanding how to use these attributes is essential for building effective queries.
+
+## Overview
+
+Every mapped class attribute (column or relationship) in SQLAlchemy is actually a `QueryableAttribute` that provides SQL expression capabilities. These attributes support Python operators and methods that translate to SQL.
+
+```python
+from sqlalchemy import select
+from models import User
+
+# User.name is a QueryableAttribute
+stmt = select(User).where(User.name == "Alice")
+
+# User.age is also a QueryableAttribute  
+stmt = select(User).where(User.age > 21)
+```
+
+## Accessing Attributes
+
+<Tabs>
+  <Tab title="Class-level Access">
+
+Access attributes on the mapped class to build queries:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    email: Mapped[str]
+    age: Mapped[int]
+
+# Class-level attributes return QueryableAttribute objects
+print(type(User.name))  # <class 'InstrumentedAttribute'>
+
+# Use in queries
+stmt = select(User).where(User.name == "Alice")
+```
+
+  </Tab>
+  <Tab title="Instance-level Access">
+
+Access attributes on instances to get/set actual values:
+
+```python
+from sqlalchemy.orm import Session
+
+# Create instance
+user = User(name="Alice", email="alice@example.com", age=30)
+
+# Instance-level access returns actual values
+print(user.name)  # "Alice"
+print(user.age)   # 30
+
+# Set values
+user.name = "Alice Smith"
+
+# Add to session and commit
+with Session(engine) as session:
+    session.add(user)
+    session.commit()
+```
+
+  </Tab>
+</Tabs>
+
+<Warning>
+Be careful not to confuse class-level and instance-level attribute access:
+- **Class-level** (`User.name`): Returns QueryableAttribute for building queries
+- **Instance-level** (`user.name`): Returns the actual value for that instance
+</Warning>
+
+## Comparison Operators
+
+QueryableAttribute objects support standard Python comparison operators that generate SQL WHERE clauses.
+
+### Equality and Inequality
+
+<CodeGroup>
+
+```python Equality
+from sqlalchemy import select
+
+# Equal to
+stmt = select(User).where(User.name == "Alice")
+# SQL: WHERE users.name = 'Alice'
+
+# Not equal to
+stmt = select(User).where(User.name != "Bob")
+# SQL: WHERE users.name != 'Bob'
+```
+
+```python NULL Checks
+# IS NULL
+stmt = select(User).where(User.deleted_at.is_(None))
+# SQL: WHERE users.deleted_at IS NULL
+
+# IS NOT NULL  
+stmt = select(User).where(User.deleted_at.is_not(None))
+# SQL: WHERE users.deleted_at IS NOT NULL
+```
+
+```python Comparisons
+# Greater than
+stmt = select(User).where(User.age > 18)
+
+# Less than
+stmt = select(User).where(User.age < 65)
+
+# Greater than or equal
+stmt = select(User).where(User.score >= 100)
+
+# Less than or equal
+stmt = select(User).where(User.price <= 50.0)
+```
+
+</CodeGroup>
+
+<Note>
+For NULL comparisons, always use `.is_(None)` and `.is_not(None)` instead of `== None` or `!= None`. The latter may not work correctly in all cases.
+</Note>
+
+### Range and Membership Operators
+
+```python
+from sqlalchemy import select
+
+# IN clause
+stmt = select(User).where(User.id.in_([1, 2, 3, 4, 5]))
+# SQL: WHERE users.id IN (1, 2, 3, 4, 5)
+
+# NOT IN clause
+stmt = select(User).where(User.status.not_in(["deleted", "banned"]))
+# SQL: WHERE users.status NOT IN ('deleted', 'banned')
+
+# BETWEEN
+stmt = select(User).where(User.age.between(18, 65))
+# SQL: WHERE users.age BETWEEN 18 AND 65
+
+# IN with subquery
+subq = select(Order.user_id).where(Order.total > 1000)
+stmt = select(User).where(User.id.in_(subq))
+```
+
+## String Operators
+
+String-based columns have additional methods for pattern matching.
+
+<Tabs>
+  <Tab title="Pattern Matching">
+
+```python
+from sqlalchemy import select
+
+# LIKE (case-sensitive on most databases)
+stmt = select(User).where(User.name.like("A%"))
+# SQL: WHERE users.name LIKE 'A%'
+
+# ILIKE (case-insensitive)
+stmt = select(User).where(User.email.ilike("%@GMAIL.COM"))
+# SQL: WHERE users.email ILIKE '%@gmail.com'
+
+# NOT LIKE
+stmt = select(User).where(User.name.not_like("test%"))
+
+# NOT ILIKE  
+stmt = select(User).where(User.email.notilike("%spam%"))
+```
+
+**Wildcard patterns:**
+
+- `%` matches any sequence of characters
+- `_` matches any single character
+
+</Tab>
+  <Tab title="Contains/Starts/Ends">
+
+```python
+# Contains substring
+stmt = select(User).where(User.description.contains("developer"))
+# SQL: WHERE users.description LIKE '%developer%'
+
+# Starts with
+stmt = select(User).where(User.name.startswith("Dr."))
+# SQL: WHERE users.name LIKE 'Dr.%'
+
+# Ends with
+stmt = select(User).where(User.email.endswith("@company.com"))
+# SQL: WHERE users.email LIKE '%@company.com'
+```
+
+<Note>
+These convenience methods are equivalent to using `like()` with appropriate wildcards but are more readable.
+</Note>
+
+  </Tab>
+  <Tab title="Case Sensitivity">
+
+```python
+from sqlalchemy import func
+
+# Case-insensitive comparison using func.lower()
+stmt = select(User).where(
+    func.lower(User.email) == func.lower("Alice@Example.COM")
+)
+
+# Alternative: use ilike for simple patterns
+stmt = select(User).where(User.email.ilike("alice@example.com"))
+
+# Regular expressions (PostgreSQL)
+stmt = select(User).where(User.name.regexp_match(r"^[A-Z][a-z]+$"))
+```
+
+  </Tab>
+</Tabs>
+
+## Logical Operators
+
+Combine multiple conditions using logical operators.
+
+### AND Conditions
+
+```python
+from sqlalchemy import select, and_
+
+# Method 1: Multiple arguments to where() (implicit AND)
+stmt = select(User).where(
+    User.age >= 18,
+    User.is_active == True,
+    User.country == "US"
+)
+
+# Method 2: Chained where() calls
+stmt = (
+    select(User)
+    .where(User.age >= 18)
+    .where(User.is_active == True)
+    .where(User.country == "US")
+)
+
+# Method 3: Explicit and_()
+stmt = select(User).where(
+    and_(
+        User.age >= 18,
+        User.is_active == True,
+        User.country == "US"
+    )
+)
+
+# All three produce: WHERE age >= 18 AND is_active = true AND country = 'US'
+```
+
+### OR Conditions
+
+```python
+from sqlalchemy import select, or_
+
+# OR requires explicit or_()
+stmt = select(User).where(
+    or_(
+        User.status == "premium",
+        User.status == "vip"
+    )
+)
+# SQL: WHERE status = 'premium' OR status = 'vip'
+
+# Nested conditions
+stmt = select(User).where(
+    and_(
+        User.is_active == True,
+        or_(
+            User.age < 18,
+            User.parental_consent == True
+        )
+    )
+)
+# SQL: WHERE is_active = true AND (age < 18 OR parental_consent = true)
+```
+
+### NOT Conditions
+
+```python
+from sqlalchemy import select, not_
+
+# NOT operator
+stmt = select(User).where(
+    not_(User.is_deleted == True)
+)
+
+# Equivalent to
+stmt = select(User).where(User.is_deleted != True)
+
+# More complex NOT
+stmt = select(User).where(
+    not_(
+        or_(
+            User.status == "banned",
+            User.status == "deleted"
+        )
+    )
+)
+```
+
+## Arithmetic Operators
+
+Perform arithmetic operations in queries.
+
+```python
+from sqlalchemy import select
+
+# Addition
+stmt = select(Product).where(Product.price + Product.tax > 100)
+
+# Subtraction
+stmt = select(Account).where(Account.balance - Account.pending < 0)
+
+# Multiplication
+stmt = select(Item).where(Item.quantity * Item.unit_price > 1000)
+
+# Division
+stmt = select(Employee).where(Employee.salary / 12 > 5000)
+
+# Modulo
+stmt = select(User).where(User.id % 2 == 0)  # Even IDs
+
+# Complex expressions
+stmt = select(Order).where(
+    (Order.subtotal + Order.tax - Order.discount) > 500
+)
+```
+
+## Column Labels and Aliases
+
+Create labeled expressions for use in SELECT clauses.
+
+```python
+from sqlalchemy import select, func
+
+# Simple label
+stmt = select(User.name.label("full_name"))
+
+for row in session.execute(stmt):
+    print(row.full_name)
+
+# Arithmetic with label
+stmt = select(
+    Product.name,
+    (Product.price * 1.1).label("price_with_tax")
+)
+
+# Aggregate with label
+stmt = select(
+    User.department,
+    func.count(User.id).label("employee_count"),
+    func.avg(User.salary).label("avg_salary")
+).group_by(User.department)
+
+for row in session.execute(stmt):
+    print(f"{row.department}: {row.employee_count} employees, avg ${row.avg_salary}")
+```
+
+## Relationship Attributes
+
+Relationship attributes work differently than column attributes.
+
+<CodeGroup>
+
+```python Filtering by Related Objects
+from sqlalchemy import select
+from models import User, Address
+
+# Has relationship - check if collection is non-empty
+stmt = select(User).where(User.addresses.any())
+# SQL: WHERE EXISTS (SELECT 1 FROM addresses WHERE addresses.user_id = users.id)
+
+# Has with condition
+stmt = select(User).where(
+    User.addresses.any(Address.email_address.like("%@gmail.com"))
+)
+
+# Has not - check if collection is empty
+stmt = select(User).where(~User.addresses.any())
+```
+
+```python Many-to-One Relationships
+from models import Address, User
+
+# Filter by parent relationship
+stmt = select(Address).where(Address.user.has(User.name == "Alice"))
+# SQL: WHERE EXISTS (SELECT 1 FROM users WHERE users.id = addresses.user_id AND users.name = 'Alice')
+
+# Has not
+stmt = select(Address).where(~Address.user.has(User.is_active == True))
+```
+
+```python Direct Property Access
+# Can also use direct foreign key comparison
+stmt = select(Address).join(Address.user).where(User.name == "Alice")
+
+# Or via foreign key column
+stmt = select(Address).where(Address.user_id == 123)
+```
+
+</CodeGroup>
+
+<Note>
+- Use `.any()` for one-to-many or many-to-many relationships
+- Use `.has()` for many-to-one relationships
+- Both methods accept optional filter criteria
+</Note>
+
+## SQL Functions
+
+Use the `func` object to call SQL functions on attributes.
+
+```python
+from sqlalchemy import select, func
+
+# String functions
+stmt = select(User).where(func.length(User.name) > 10)
+stmt = select(func.upper(User.name))
+stmt = select(func.concat(User.first_name, " ", User.last_name))
+
+# Numeric functions
+stmt = select(func.round(Product.price, 2))
+stmt = select(func.abs(Account.balance))
+
+# Date functions
+stmt = select(User).where(
+    func.date(User.created_at) == func.current_date()
+)
+
+# Aggregate functions
+stmt = select(
+    func.count(User.id),
+    func.avg(User.age),
+    func.min(User.created_at),
+    func.max(User.last_login)
+)
+
+# JSON functions (PostgreSQL)
+stmt = select(User).where(
+    func.json_extract_path_text(User.metadata, "premium") == "true"
+)
+```
+
+## Type Casting
+
+Cast column types for comparisons and operations.
+
+```python
+from sqlalchemy import select, cast, Integer, String, Date
+
+# Cast string to integer
+stmt = select(User).where(cast(User.age_string, Integer) > 18)
+
+# Cast to string
+stmt = select(cast(User.id, String).label("id_str"))
+
+# Cast date
+stmt = select(User).where(
+    cast(User.created_at, Date) == "2024-01-01"
+)
+```
+
+## Hybrid Attributes
+
+Hybrid attributes work at both the instance and class level.
+
+```python
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy import select
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    first_name: Mapped[str]
+    last_name: Mapped[str]
+    
+    @hybrid_property
+    def full_name(self):
+        """Instance-level: concatenate actual values"""
+        return f"{self.first_name} {self.last_name}"
+    
+    @full_name.expression
+    def full_name(cls):
+        """Class-level: SQL expression"""
+        return func.concat(cls.first_name, " ", cls.last_name)
+
+# Use in queries
+stmt = select(User).where(User.full_name == "Alice Smith")
+
+# Use on instances
+user = session.get(User, 1)
+print(user.full_name)  # "Alice Smith"
+```
+
+## Performance Considerations
+
+<Steps>
+
+<Step title="Index filterable columns">
+
+Ensure columns used frequently in `where()` clauses have indexes:
+
+```python
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(index=True)  # Frequently filtered
+    status: Mapped[str] = mapped_column(index=True)  # Frequently filtered
+    created_at: Mapped[datetime] = mapped_column(index=True)
+```
+
+</Step>
+
+<Step title="Avoid function calls on indexed columns">
+
+Function calls prevent index usage:
+
+```python
+# Bad - can't use index on User.email
+stmt = select(User).where(func.lower(User.email) == "alice@example.com")
+
+# Better - normalize data at write time and query directly
+stmt = select(User).where(User.email == "alice@example.com")
+
+# Or create a functional index on lower(email) in PostgreSQL
+```
+
+</Step>
+
+<Step title="Use appropriate operators">
+
+Some operators are more efficient than others:
+
+```python
+# Efficient - can use index
+stmt = select(User).where(User.name.startswith("A"))
+
+# Less efficient - can't use index effectively  
+stmt = select(User).where(User.name.contains("alice"))
+
+# Most efficient for exact matches
+stmt = select(User).where(User.name == "Alice")
+```
+
+</Step>
+
+</Steps>
+
+## See Also
+
+- [Query Guide](/orm/query-guide) - Building SELECT statements with where(), order_by(), limit()
+- [Loading Techniques](/orm/loading-techniques) - Eager and lazy loading for relationships
+- [SQLAlchemy Column Elements](https://docs.sqlalchemy.org/en/20/core/sqlelement.html)

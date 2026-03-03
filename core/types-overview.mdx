@@ -1,0 +1,548 @@
+---
+title: 'Type System Overview'
+description: 'Understanding SQLAlchemy type system and type mapping'
+---
+
+# Type System Overview
+
+SQLAlchemy's type system provides a bridge between Python types and database column types. It handles type conversion, validation, and dialect-specific type rendering.
+
+## Type Architecture
+
+<Steps>
+  <Step title="TypeEngine Base Class">
+    All SQLAlchemy types inherit from `TypeEngine`, which defines the type interface.
+  </Step>
+  
+  <Step title="Generic Types">
+    Cross-database types that work across all dialects (Integer, String, DateTime, etc.).
+  </Step>
+  
+  <Step title="Dialect-Specific Types">
+    Types specific to certain databases (PostgreSQL JSONB, MySQL ENUM, etc.).
+  </Step>
+  
+  <Step title="Type Decorators">
+    Wrappers that add custom behavior to existing types.
+  </Step>
+</Steps>
+
+## Type Categories
+
+### Generic Types (Cross-Database)
+
+```python
+from sqlalchemy import (
+    Integer, String, Text, Boolean, 
+    DateTime, Date, Time, 
+    Numeric, Float,
+    LargeBinary, JSON
+)
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(100)),
+    Column('email', String(255)),
+    Column('bio', Text),
+    Column('is_active', Boolean, default=True),
+    Column('created_at', DateTime),
+    Column('birth_date', Date),
+    Column('balance', Numeric(10, 2)),
+    Column('rating', Float),
+    Column('avatar', LargeBinary),
+    Column('metadata', JSON)
+)
+```
+
+<Note>
+  Generic types automatically map to appropriate database-specific types based on the dialect.
+</Note>
+
+### Type Affinity
+
+SQLAlchemy groups types by "affinity" - their general category:
+
+```python
+from sqlalchemy import Integer, BigInteger, SmallInteger, BIGINT
+
+# All have INTEGER affinity
+Column('id', Integer)
+Column('big_id', BigInteger)
+Column('small_id', SmallInteger)
+Column('raw_id', BIGINT)  # SQL type literal
+```
+
+## Type Usage Patterns
+
+### In Table Definitions
+
+<Tabs>
+  <Tab title="Standard Usage">
+    ```python
+    from sqlalchemy import Table, Column, Integer, String, DateTime
+    
+    users = Table(
+        'users',
+        metadata,
+        Column('id', Integer, primary_key=True),
+        Column('username', String(50), nullable=False),
+        Column('created_at', DateTime, nullable=False)
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Type Instances">
+    ```python
+    from sqlalchemy import String, Numeric
+    
+    # Reusable type instances
+    username_type = String(50)
+    money_type = Numeric(10, 2)
+    
+    users = Table(
+        'users',
+        metadata,
+        Column('username', username_type),
+        Column('balance', money_type)
+    )
+    
+    orders = Table(
+        'orders',
+        metadata,
+        Column('customer', username_type),
+        Column('total', money_type)
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Type Classes">
+    ```python
+    # Using type classes (will be instantiated)
+    Column('id', Integer)  # Integer()
+    Column('name', String)  # String() - no length!
+    
+    # Explicit instances
+    Column('name', String(100))  # String with length
+    Column('price', Numeric(10, 2))  # Precision specified
+    ```
+  </Tab>
+</Tabs>
+
+### Type Conversion
+
+```python
+from sqlalchemy import create_engine, select, Integer, String
+from datetime import datetime
+
+engine = create_engine('sqlite:///:memory:')
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer),
+    Column('name', String(50)),
+    Column('created_at', DateTime)
+)
+
+metadata.create_all(engine)
+
+# Python values automatically converted to SQL
+with engine.begin() as conn:
+    conn.execute(
+        users.insert(),
+        {'id': 1, 'name': 'alice', 'created_at': datetime.now()}
+    )
+    
+    # SQL values automatically converted to Python
+    result = conn.execute(select(users))
+    row = result.fetchone()
+    
+    print(type(row.id))  # <class 'int'>
+    print(type(row.name))  # <class 'str'>
+    print(type(row.created_at))  # <class 'datetime.datetime'>
+```
+
+## Type Properties
+
+### python_type
+
+```python
+from sqlalchemy import Integer, String, DateTime
+
+# Get Python type
+print(Integer().python_type)  # <class 'int'>
+print(String().python_type)  # <class 'str'>
+print(DateTime().python_type)  # <class 'datetime.datetime'>
+```
+
+### Comparator Operations
+
+```python
+# Types define available operations
+stmt = select(users).where(
+    users.c.name.like('%alice%')  # String operations
+)
+
+stmt = select(users).where(
+    users.c.age > 18  # Numeric operations
+)
+
+stmt = select(users).where(
+    users.c.created_at.between('2024-01-01', '2024-12-31')  # Date operations
+)
+```
+
+## Generic vs SQL Types
+
+### Generic Type Classes
+
+```python
+from sqlalchemy import Integer, String, Boolean, DateTime
+
+# These are portable across databases
+Column('id', Integer)  # Works on all databases
+Column('name', String(50))  # Works on all databases
+Column('active', Boolean)  # Works on all databases
+```
+
+### SQL Type Literals
+
+```python
+from sqlalchemy import INTEGER, VARCHAR, BOOLEAN, TIMESTAMP
+
+# SQL type literals (uppercase)
+Column('id', INTEGER)
+Column('name', VARCHAR(50))
+Column('active', BOOLEAN)
+Column('created', TIMESTAMP)
+```
+
+<Note>
+  Generic types (Integer, String) are recommended for portability. SQL literals (INTEGER, VARCHAR) are for when you need exact SQL type names.
+</Note>
+
+## Type Compilation
+
+### How Types Become SQL
+
+```python
+from sqlalchemy import String, Integer, DateTime
+from sqlalchemy.dialects import postgresql, mysql, sqlite
+
+# Same type, different dialects
+string_type = String(100)
+
+print(string_type.compile(dialect=postgresql.dialect()))  # VARCHAR(100)
+print(string_type.compile(dialect=mysql.dialect()))  # VARCHAR(100)
+print(string_type.compile(dialect=sqlite.dialect()))  # VARCHAR(100)
+
+# Boolean varies by dialect
+bool_type = Boolean()
+
+print(bool_type.compile(dialect=postgresql.dialect()))  # BOOLEAN
+print(bool_type.compile(dialect=mysql.dialect()))  # BOOL
+print(bool_type.compile(dialect=sqlite.dialect()))  # BOOLEAN
+```
+
+### Dialect-Specific Rendering
+
+```python
+from sqlalchemy import JSON
+from sqlalchemy.dialects import postgresql, mysql, sqlite
+
+json_type = JSON()
+
+# PostgreSQL: JSON or JSONB
+print(json_type.compile(dialect=postgresql.dialect()))  # JSON
+
+# MySQL 5.7+: JSON
+print(json_type.compile(dialect=mysql.dialect()))  # JSON
+
+# SQLite: TEXT (JSON stored as text)
+print(json_type.compile(dialect=sqlite.dialect()))  # TEXT
+```
+
+## Type Parameters
+
+### Common Parameters
+
+<CodeGroup>
+```python Length
+# String types
+Column('short_text', String(50))
+Column('medium_text', String(255))
+Column('long_text', String(1000))
+
+# No length = unlimited (TEXT)
+Column('unlimited', String)  # Usually becomes TEXT
+Column('unlimited', Text)  # Explicitly TEXT
+```
+
+```python Precision and Scale
+from sqlalchemy import Numeric, Float, DECIMAL
+
+# Numeric(precision, scale)
+Column('price', Numeric(10, 2))  # 10 digits, 2 decimal places
+Column('tax_rate', Numeric(5, 4))  # 0.0000 to 9.9999
+
+# Float(precision)
+Column('score', Float(precision=53))  # Double precision
+
+# DECIMAL is alias for Numeric
+Column('amount', DECIMAL(12, 2))
+```
+
+```python Timezone
+from sqlalchemy import DateTime, Time
+
+# With timezone
+Column('created_at', DateTime(timezone=True))
+Column('start_time', Time(timezone=True))
+
+# Without timezone (default)
+Column('updated_at', DateTime(timezone=False))
+Column('end_time', Time(timezone=False))
+```
+
+```python Collation
+from sqlalchemy import String
+
+# String with collation
+Column('name', String(50, collation='utf8mb4_unicode_ci'))
+Column('email', String(100, collation='NOCASE'))
+```
+</CodeGroup>
+
+## Type Comparison
+
+### Type Equality
+
+```python
+from sqlalchemy import Integer, String, VARCHAR
+
+# Type comparison
+type1 = Integer()
+type2 = Integer()
+
+print(type1 == type2)  # False (different instances)
+print(type(type1) == type(type2))  # True (same class)
+
+# String with same length
+str1 = String(50)
+str2 = String(50)
+print(type(str1) == type(str2))  # True
+
+# Generic vs SQL literal
+generic = String(50)
+literal = VARCHAR(50)
+print(type(generic) == type(literal))  # False
+```
+
+### Type Adaptation
+
+```python
+from sqlalchemy import Integer, String, Numeric
+
+# Implicit type adaptation in expressions
+stmt = select(
+    (users.c.score * 1.5).label('adjusted_score')
+)
+# Result type adapted to Numeric
+
+stmt = select(
+    func.concat(users.c.first_name, ' ', users.c.last_name)
+)
+# Result type is String
+```
+
+## NULL Type
+
+```python
+from sqlalchemy import NullType
+
+# Used when type cannot be determined
+Column('unknown', NullType())
+
+# Automatically inferred in some cases
+from sqlalchemy import literal, select
+
+stmt = select(literal(None))  # Type is NullType
+```
+
+## Type Inspection
+
+```python
+from sqlalchemy import inspect
+
+# Inspect column types
+for col in users.c:
+    print(f"{col.name}: {col.type}")
+    print(f"  Python type: {col.type.python_type}")
+    print(f"  Nullable: {col.nullable}")
+    print(f"  Default: {col.default}")
+
+# Reflected types
+inspector = inspect(engine)
+columns = inspector.get_columns('users')
+
+for col in columns:
+    print(f"{col['name']}: {col['type']}")
+```
+
+## Type Hints and Python Types
+
+### Type Annotations (ORM)
+
+```python
+from typing import Optional
+from datetime import datetime, date
+from decimal import Decimal
+
+# ORM uses Python type hints
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = 'users'
+    
+    # Type hints determine SQL types
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    email: Mapped[Optional[str]] = mapped_column(String(100))
+    balance: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    created_at: Mapped[datetime]
+    birth_date: Mapped[Optional[date]]
+```
+
+### Core Type Mapping
+
+```python
+# Core doesn't use type hints, but you can add them
+from typing import cast
+
+stmt = select(users.c.id, users.c.name)
+
+with engine.connect() as conn:
+    result = conn.execute(stmt)
+    for row in result:
+        # Type narrowing with cast
+        user_id: int = cast(int, row.id)
+        user_name: str = cast(str, row.name)
+```
+
+## Common Patterns
+
+### Enum-like Types
+
+```python
+from sqlalchemy import Enum as SQLEnum
+from enum import Enum as PyEnum
+
+# Python enum
+class Status(PyEnum):
+    PENDING = 'pending'
+    ACTIVE = 'active'
+    INACTIVE = 'inactive'
+
+# Use in column
+Column('status', SQLEnum(Status))
+
+# Or with string values
+Column('status', SQLEnum('pending', 'active', 'inactive', name='status_enum'))
+```
+
+### Money/Currency
+
+```python
+from sqlalchemy import Numeric
+
+# Standard money type
+money_type = Numeric(10, 2)
+
+Column('price', money_type)
+Column('tax', money_type)
+Column('total', money_type)
+```
+
+### UUID Types
+
+```python
+from sqlalchemy import UUID, String
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+
+# Generic UUID (becomes CHAR(32) or similar)
+Column('id', UUID(as_uuid=True), primary_key=True)
+
+# PostgreSQL native UUID
+Column('id', PG_UUID(as_uuid=True), primary_key=True)
+
+# Stored as string
+Column('id', String(36))  # For UUID strings
+```
+
+### Timestamp Patterns
+
+```python
+from sqlalchemy import DateTime
+from datetime import datetime
+
+# Created timestamp
+Column('created_at', DateTime, nullable=False, default=datetime.utcnow)
+
+# Updated timestamp
+Column('updated_at', DateTime, onupdate=datetime.utcnow)
+
+# With timezone
+Column('created_at', DateTime(timezone=True), server_default=func.now())
+```
+
+## Performance Considerations
+
+### Type Selection Impact
+
+<CardGroup cols={2}>
+  <Card title="Integer vs BigInteger" icon="1">
+    Use `Integer` for most IDs. Only use `BigInteger` when you expect > 2 billion rows.
+  </Card>
+  
+  <Card title="String Length" icon="ruler">
+    Specify appropriate lengths. `String(50)` is more efficient than `Text` for short strings.
+  </Card>
+  
+  <Card title="Numeric Precision" icon="calculator">
+    Use exact precision for money: `Numeric(10, 2)`. Use `Float` only for scientific values.
+  </Card>
+  
+  <Card title="DateTime Timezone" icon="clock">
+    Use `DateTime(timezone=True)` for multi-timezone apps. Simpler apps can use timezone=False.
+  </Card>
+</CardGroup>
+
+### Index-Friendly Types
+
+```python
+# Good for indexing
+Column('id', Integer, index=True)  # Efficient
+Column('email', String(100), index=True)  # Good with length
+Column('created_at', DateTime, index=True)  # Good for ranges
+
+# Poor for indexing
+Column('bio', Text, index=True)  # Usually too large
+Column('data', JSON, index=True)  # Often not indexable directly
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Standard Types" href="/core/types-standard">
+    Explore Integer, String, DateTime, and more
+  </Card>
+  
+  <Card title="Custom Types" href="/core/types-custom">
+    Create your own custom type decorators
+  </Card>
+</CardGroup>

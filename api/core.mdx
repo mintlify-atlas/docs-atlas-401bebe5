@@ -1,0 +1,335 @@
+---
+title: Core SQL API
+description: SQLAlchemy Core SQL expression language API
+---
+
+Complete reference for SQLAlchemy's SQL expression language.
+
+## SELECT Statements
+
+### select()
+
+Construct a SELECT statement.
+
+```python
+from sqlalchemy import select, func
+
+# Select specific columns
+stmt = select(users.c.name, users.c.email)
+
+# Select entire table
+stmt = select(users)
+
+# With WHERE clause
+stmt = select(users).where(users.c.age > 18)
+
+# With ORDER BY
+stmt = select(users).order_by(users.c.name)
+
+# With LIMIT
+stmt = select(users).limit(10)
+```
+
+<ParamField path="*entities" type="ColumnElement | FromClause">
+  Columns or tables to select
+</ParamField>
+
+### Methods
+
+**where(*criteria)** - Add WHERE clause
+
+**order_by(*clauses)** - Add ORDER BY
+
+**limit(n)** - Add LIMIT
+
+**offset(n)** - Add OFFSET
+
+**group_by(*clauses)** - Add GROUP BY
+
+**having(*criteria)** - Add HAVING clause
+
+**join(target, onclause)** - Add JOIN
+
+**outerjoin(target, onclause)** - Add LEFT OUTER JOIN
+
+**distinct()** - Add DISTINCT
+
+**select_from(fromclause)** - Specify FROM clause
+
+**with_for_update()** - Add FOR UPDATE
+
+## INSERT Statements
+
+### insert()
+
+Construct an INSERT statement.
+
+```python
+from sqlalchemy import insert
+
+# Single row
+stmt = insert(users).values(name="Alice", email="alice@example.com")
+
+# Multiple rows
+stmt = insert(users).values([
+    {"name": "Bob", "email": "bob@example.com"},
+    {"name": "Charlie", "email": "charlie@example.com"},
+])
+
+# From select
+stmt = insert(users_archive).from_select(
+    ["name", "email"],
+    select(users.c.name, users.c.email).where(users.c.active == False)
+)
+```
+
+<ParamField path="table" type="Table">
+  Target table for insert
+</ParamField>
+
+### Methods
+
+**values(**kwargs)** - Set values to insert
+
+**returning(*columns)** - Return inserted columns
+
+**from_select(names, select)** - Insert from SELECT
+
+## UPDATE Statements
+
+### update()
+
+Construct an UPDATE statement.
+
+```python
+from sqlalchemy import update
+
+# Update with WHERE
+stmt = update(users).where(users.c.id == 1).values(name="Alice Updated")
+
+# Update multiple columns
+stmt = update(users).where(users.c.active == False).values(
+    active=True,
+    updated_at=func.now()
+)
+
+# Update with RETURNING
+stmt = update(users).where(users.c.id == 1).values(name="Alice").returning(users.c.id, users.c.name)
+```
+
+<ParamField path="table" type="Table">
+  Target table for update
+</ParamField>
+
+### Methods
+
+**where(*criteria)** - Add WHERE clause
+
+**values(**kwargs)** - Set values to update
+
+**returning(*columns)** - Return updated columns
+
+## DELETE Statements
+
+### delete()
+
+Construct a DELETE statement.
+
+```python
+from sqlalchemy import delete
+
+# Delete with WHERE
+stmt = delete(users).where(users.c.active == False)
+
+# Delete with RETURNING
+stmt = delete(users).where(users.c.id == 1).returning(users.c.name)
+```
+
+<ParamField path="table" type="Table">
+  Target table for delete
+</ParamField>
+
+### Methods
+
+**where(*criteria)** - Add WHERE clause
+
+**returning(*columns)** - Return deleted columns
+
+## Expressions
+
+### Comparison Operators
+
+```python
+# Equality
+users.c.name == "Alice"
+users.c.age != 18
+
+# Comparison
+users.c.age > 18
+users.c.age >= 18
+users.c.age < 65
+users.c.age <= 65
+
+# NULL checks
+users.c.email.is_(None)
+users.c.email.is_not(None)
+
+# IN clause
+users.c.name.in_(["Alice", "Bob"])
+users.c.id.not_in([1, 2, 3])
+
+# BETWEEN
+users.c.age.between(18, 65)
+
+# LIKE
+users.c.name.like("%Alice%")
+users.c.name.ilike("%alice%")  # Case-insensitive
+```
+
+### Logical Operators
+
+```python
+from sqlalchemy import and_, or_, not_
+
+# AND
+stmt = select(users).where(and_(
+    users.c.age > 18,
+    users.c.active == True
+))
+
+# OR
+stmt = select(users).where(or_(
+    users.c.role == "admin",
+    users.c.role == "moderator"
+))
+
+# NOT
+stmt = select(users).where(not_(users.c.deleted))
+```
+
+### Functions
+
+```python
+from sqlalchemy import func
+
+# Aggregates
+stmt = select(func.count(users.c.id))
+stmt = select(func.sum(orders.c.total))
+stmt = select(func.avg(products.c.price))
+stmt = select(func.min(products.c.price))
+stmt = select(func.max(products.c.price))
+
+# String functions
+stmt = select(func.upper(users.c.name))
+stmt = select(func.lower(users.c.email))
+stmt = select(func.concat(users.c.first_name, " ", users.c.last_name))
+
+# Date functions
+stmt = select(func.now())
+stmt = select(func.current_date())
+```
+
+## JOINs
+
+```python
+# INNER JOIN
+stmt = select(users, addresses).join(
+    addresses, users.c.id == addresses.c.user_id
+)
+
+# LEFT OUTER JOIN
+stmt = select(users, addresses).outerjoin(
+    addresses, users.c.id == addresses.c.user_id
+)
+
+# Multiple JOINs
+stmt = select(users, addresses, orders).join(
+    addresses, users.c.id == addresses.c.user_id
+).join(
+    orders, users.c.id == orders.c.user_id
+)
+```
+
+## Subqueries
+
+```python
+# Scalar subquery
+subq = select(func.max(orders.c.total)).scalar_subquery()
+stmt = select(orders).where(orders.c.total == subq)
+
+# Subquery in FROM
+subq = select(users.c.city, func.count().label("user_count")).group_by(users.c.city).subquery()
+stmt = select(subq.c.city, subq.c.user_count).where(subq.c.user_count > 10)
+```
+
+## Common Table Expressions (CTEs)
+
+```python
+from sqlalchemy import select
+
+# Define CTE
+active_users = select(users).where(users.c.active == True).cte("active_users")
+
+# Use CTE
+stmt = select(active_users).where(active_users.c.age > 18)
+
+# Recursive CTE
+cte = select(categories.c.id, categories.c.parent_id, categories.c.name).where(
+    categories.c.parent_id.is_(None)
+).cte("category_tree", recursive=True)
+
+cte = cte.union_all(
+    select(categories.c.id, categories.c.parent_id, categories.c.name).join(
+        cte, categories.c.parent_id == cte.c.id
+    )
+)
+
+stmt = select(cte)
+```
+
+## Text and Bind Parameters
+
+### text()
+
+Create raw SQL text.
+
+```python
+from sqlalchemy import text
+
+stmt = text("SELECT * FROM users WHERE name = :name")
+result = conn.execute(stmt, {"name": "Alice"})
+```
+
+### bindparam()
+
+Create bound parameter.
+
+```python
+from sqlalchemy import bindparam
+
+stmt = select(users).where(users.c.name == bindparam("user_name"))
+result = conn.execute(stmt, {"user_name": "Alice"})
+```
+
+## Casting and Type Coercion
+
+### cast()
+
+Cast expression to different type.
+
+```python
+from sqlalchemy import cast, String, Integer
+
+stmt = select(cast(users.c.age, String))
+stmt = select(cast(users.c.score, Integer))
+```
+
+### type_coerce()
+
+Type coercion without SQL CAST.
+
+```python
+from sqlalchemy import type_coerce, JSON
+
+stmt = select(type_coerce(users.c.data, JSON)["key"])
+```

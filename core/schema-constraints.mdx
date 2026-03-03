@@ -1,0 +1,703 @@
+---
+title: 'Constraints'
+description: 'Define primary keys, foreign keys, unique constraints, and check constraints'
+---
+
+# Schema Constraints
+
+Constraints define rules for data integrity in database tables. SQLAlchemy supports all standard SQL constraints through explicit constraint objects.
+
+## Primary Key Constraints
+
+### Single Column Primary Key
+
+```python
+from sqlalchemy import Table, Column, Integer, String, MetaData
+
+metadata = MetaData()
+
+# Inline primary key
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50))
+)
+```
+
+### Composite Primary Keys
+
+<Tabs>
+  <Tab title="Inline Definition">
+    ```python
+    # Multiple columns marked as primary_key=True
+    order_items = Table(
+        'order_items',
+        metadata,
+        Column('order_id', Integer, primary_key=True),
+        Column('product_id', Integer, primary_key=True),
+        Column('quantity', Integer)
+    )
+    ```
+  </Tab>
+  
+  <Tab title="PrimaryKeyConstraint">
+    ```python
+    from sqlalchemy import PrimaryKeyConstraint
+    
+    order_items = Table(
+        'order_items',
+        metadata,
+        Column('order_id', Integer),
+        Column('product_id', Integer),
+        Column('quantity', Integer),
+        PrimaryKeyConstraint('order_id', 'product_id', name='pk_order_items')
+    )
+    ```
+  </Tab>
+</Tabs>
+
+<ParamField path="PrimaryKeyConstraint" type="class">
+  **Signature:** `PrimaryKeyConstraint(*columns, name: Optional[str] = None, deferrable: Optional[bool] = None, initially: Optional[str] = None)`
+  
+  Defines a table-level PRIMARY KEY constraint.
+</ParamField>
+
+## Foreign Key Constraints
+
+### Basic Foreign Keys
+
+```python
+from sqlalchemy import ForeignKey
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50))
+)
+
+orders = Table(
+    'orders',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('user_id', Integer, ForeignKey('users.id')),
+    Column('total', Numeric(10, 2))
+)
+```
+
+<ParamField path="ForeignKey" type="class">
+  **Signature:** `ForeignKey(column, onupdate: Optional[str] = None, ondelete: Optional[str] = None, name: Optional[str] = None, deferrable: Optional[bool] = None, initially: Optional[str] = None)`
+  
+  Defines a column-level foreign key constraint.
+</ParamField>
+
+### Foreign Key with Schema
+
+```python
+# Reference table in different schema
+Column('user_id', Integer, ForeignKey('auth.users.id'))
+
+# Reference using table object
+Column('user_id', Integer, ForeignKey(users.c.id))
+```
+
+### Referential Actions
+
+<CodeGroup>
+```python ON DELETE
+# CASCADE: Delete child rows when parent is deleted
+Column('user_id', Integer, ForeignKey('users.id', ondelete='CASCADE'))
+
+# SET NULL: Set to NULL when parent is deleted
+Column('user_id', Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+
+# RESTRICT: Prevent parent deletion if children exist
+Column('user_id', Integer, ForeignKey('users.id', ondelete='RESTRICT'))
+
+# NO ACTION: Similar to RESTRICT (default)
+Column('user_id', Integer, ForeignKey('users.id', ondelete='NO ACTION'))
+
+# SET DEFAULT: Set to default value
+Column('user_id', Integer, ForeignKey('users.id', ondelete='SET DEFAULT'), default=0)
+```
+
+```python ON UPDATE
+# CASCADE: Update child rows when parent key changes
+Column('user_id', Integer, ForeignKey('users.id', onupdate='CASCADE'))
+
+# SET NULL: Set to NULL when parent key changes
+Column('user_id', Integer, ForeignKey('users.id', onupdate='SET NULL'))
+
+# RESTRICT: Prevent parent key update if children exist
+Column('user_id', Integer, ForeignKey('users.id', onupdate='RESTRICT'))
+```
+
+```python Combined Actions
+# Common pattern: CASCADE on both
+Column(
+    'user_id',
+    Integer,
+    ForeignKey(
+        'users.id',
+        onupdate='CASCADE',
+        ondelete='CASCADE'
+    )
+)
+
+# Soft delete pattern
+Column(
+    'user_id',
+    Integer,
+    ForeignKey(
+        'users.id',
+        onupdate='CASCADE',
+        ondelete='SET NULL'
+    ),
+    nullable=True
+)
+```
+</CodeGroup>
+
+### Named Foreign Keys
+
+```python
+# Named constraint for easier management
+Column(
+    'user_id',
+    Integer,
+    ForeignKey('users.id', name='fk_orders_user_id')
+)
+```
+
+### Composite Foreign Keys
+
+```python
+from sqlalchemy import ForeignKeyConstraint
+
+# Parent table with composite key
+products = Table(
+    'products',
+    metadata,
+    Column('category_id', Integer, primary_key=True),
+    Column('product_id', Integer, primary_key=True),
+    Column('name', String(100))
+)
+
+# Child table referencing composite key
+prices = Table(
+    'prices',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('category_id', Integer),
+    Column('product_id', Integer),
+    Column('price', Numeric(10, 2)),
+    ForeignKeyConstraint(
+        ['category_id', 'product_id'],
+        ['products.category_id', 'products.product_id'],
+        name='fk_prices_product',
+        ondelete='CASCADE'
+    )
+)
+```
+
+### Deferred Foreign Keys
+
+```python
+# PostgreSQL: Deferrable constraints
+Column(
+    'user_id',
+    Integer,
+    ForeignKey(
+        'users.id',
+        deferrable=True,
+        initially='DEFERRED'
+    )
+)
+
+# initially='IMMEDIATE' - check at statement end (default)
+# initially='DEFERRED' - check at transaction end
+```
+
+## Unique Constraints
+
+### Single Column Unique
+
+```python
+# Inline unique constraint
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('email', String(100), unique=True),
+    Column('username', String(50), unique=True)
+)
+```
+
+### Composite Unique Constraints
+
+```python
+from sqlalchemy import UniqueConstraint
+
+# Multiple columns must be unique together
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('tenant_id', Integer),
+    Column('email', String(100)),
+    UniqueConstraint('tenant_id', 'email', name='uq_tenant_email')
+)
+# Allows same email across different tenants
+```
+
+<ParamField path="UniqueConstraint" type="class">
+  **Signature:** `UniqueConstraint(*columns, name: Optional[str] = None, deferrable: Optional[bool] = None, initially: Optional[str] = None)`
+  
+  Defines a table-level UNIQUE constraint.
+</ParamField>
+
+### Partial Unique Constraints (PostgreSQL)
+
+```python
+from sqlalchemy import Index
+
+# Unique index with WHERE clause
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('email', String(100)),
+    Column('deleted_at', DateTime, nullable=True),
+    Index(
+        'uq_active_email',
+        'email',
+        unique=True,
+        postgresql_where=(Column('deleted_at').is_(None))
+    )
+)
+# Email must be unique only for non-deleted users
+```
+
+## Check Constraints
+
+### Column Check Constraints
+
+```python
+from sqlalchemy import CheckConstraint
+
+products = Table(
+    'products',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(100)),
+    Column('price', Numeric(10, 2), CheckConstraint('price > 0')),
+    Column('quantity', Integer, CheckConstraint('quantity >= 0'))
+)
+```
+
+### Table Check Constraints
+
+```python
+# Named check constraint
+products = Table(
+    'products',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('cost', Numeric(10, 2)),
+    Column('price', Numeric(10, 2)),
+    CheckConstraint('price >= cost', name='ck_price_above_cost')
+)
+
+# Multiple column check
+events = Table(
+    'events',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('start_date', DateTime),
+    Column('end_date', DateTime),
+    CheckConstraint(
+        'end_date > start_date',
+        name='ck_valid_date_range'
+    )
+)
+```
+
+<ParamField path="CheckConstraint" type="class">
+  **Signature:** `CheckConstraint(sqltext: str, name: Optional[str] = None, deferrable: Optional[bool] = None, initially: Optional[str] = None)`
+  
+  Defines a CHECK constraint using SQL expression.
+</ParamField>
+
+### Complex Check Constraints
+
+```python
+# Multiple conditions
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('age', Integer),
+    Column('email', String(100)),
+    CheckConstraint(
+        "(age >= 18 AND email IS NOT NULL) OR age < 18",
+        name='ck_adult_email_required'
+    )
+)
+
+# Pattern matching
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('email', String(100)),
+    CheckConstraint(
+        "email LIKE '%@%'",
+        name='ck_valid_email_format'
+    )
+)
+
+# IN list
+orders = Table(
+    'orders',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('status', String(20)),
+    CheckConstraint(
+        "status IN ('pending', 'processing', 'shipped', 'delivered', 'cancelled')",
+        name='ck_valid_status'
+    )
+)
+```
+
+## Index Constraints
+
+### Basic Indexes
+
+```python
+from sqlalchemy import Index
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('email', String(100)),
+    Column('last_name', String(50)),
+    Column('first_name', String(50)),
+    
+    # Single column index
+    Index('ix_users_email', 'email'),
+    
+    # Composite index
+    Index('ix_users_name', 'last_name', 'first_name')
+)
+
+# Inline index on column
+Column('email', String(100), index=True)
+```
+
+### Unique Indexes
+
+```python
+# Unique index
+Index('uq_users_username', users.c.username, unique=True)
+
+# Composite unique index
+Index(
+    'uq_tenant_email',
+    users.c.tenant_id,
+    users.c.email,
+    unique=True
+)
+```
+
+### Advanced Index Options
+
+<CodeGroup>
+```python PostgreSQL Indexes
+from sqlalchemy.dialects import postgresql
+
+# B-tree index (default)
+Index('ix_name', users.c.name)
+
+# Hash index
+Index('ix_email_hash', users.c.email, postgresql_using='hash')
+
+# GIN index for JSON
+Index('ix_data_gin', users.c.data, postgresql_using='gin')
+
+# GiST index
+Index('ix_location', locations.c.point, postgresql_using='gist')
+
+# Partial index
+Index(
+    'ix_active_users',
+    users.c.name,
+    postgresql_where=users.c.active == True
+)
+
+# Expression index
+Index(
+    'ix_lower_email',
+    func.lower(users.c.email)
+)
+```
+
+```python MySQL Indexes
+# Full-text index
+Index(
+    'ft_description',
+    articles.c.title,
+    articles.c.body,
+    mysql_prefix='FULLTEXT'
+)
+
+# Index length
+Index(
+    'ix_long_text',
+    articles.c.body,
+    mysql_length=100  # Index first 100 chars
+)
+
+# Composite with lengths
+Index(
+    'ix_multi_text',
+    articles.c.title,
+    articles.c.body,
+    mysql_length={'title': 50, 'body': 100}
+)
+```
+
+```python SQLite Indexes
+# Expression index (SQLite 3.9.0+)
+Index(
+    'ix_email_lower',
+    func.lower(users.c.email)
+)
+
+# Partial index (SQLite 3.8.0+)
+Index(
+    'ix_active_users',
+    users.c.name,
+    sqlite_where=users.c.deleted_at.is_(None)
+)
+```
+</CodeGroup>
+
+## Constraint Naming Conventions
+
+### Default Naming Convention
+
+```python
+from sqlalchemy import MetaData
+
+# Define naming convention
+convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s"
+}
+
+metadata = MetaData(naming_convention=convention)
+
+# Constraints will be auto-named
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),  # pk_users
+    Column('email', String(100), unique=True),  # uq_users_email
+    Column('age', Integer, CheckConstraint('age >= 18'))  # ck_users_...
+)
+```
+
+### Custom Naming Patterns
+
+```python
+convention = {
+    "ix": "ix_%(table_name)s_%(column_0_N_name)s",
+    "uq": "uq_%(table_name)s_%(column_0_N_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s"
+}
+
+metadata = MetaData(naming_convention=convention)
+```
+
+<Note>
+  Naming conventions help manage constraints across migrations and prevent naming conflicts.
+</Note>
+
+## Managing Constraints
+
+### Adding Constraints After Table Definition
+
+```python
+from sqlalchemy import ForeignKeyConstraint, UniqueConstraint
+
+# Create table first
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('email', String(100)),
+    Column('tenant_id', Integer)
+)
+
+# Add constraint later
+users.append_constraint(
+    UniqueConstraint('tenant_id', 'email', name='uq_tenant_email')
+)
+```
+
+### Removing Constraints
+
+```python
+# Remove constraint by reference
+constraint = users.constraints.get('uq_tenant_email')
+if constraint:
+    users.constraints.remove(constraint)
+```
+
+### Inspecting Constraints
+
+```python
+# List all constraints
+for constraint in users.constraints:
+    print(type(constraint).__name__, constraint.name)
+
+# Get specific constraint type
+pk = users.primary_key
+print(f"Primary key columns: {[c.name for c in pk.columns]}")
+
+# Foreign keys
+for fk in users.foreign_keys:
+    print(f"FK: {fk.parent.name} -> {fk.column}")
+```
+
+## Constraint DDL
+
+### Creating Constraints
+
+```python
+from sqlalchemy import DDL
+
+# Add constraint with DDL
+with engine.begin() as conn:
+    conn.execute(DDL(
+        'ALTER TABLE users ADD CONSTRAINT ck_age CHECK (age >= 18)'
+    ))
+
+# Using AddConstraint
+from sqlalchemy.schema import AddConstraint
+
+constraint = CheckConstraint('price > 0', name='ck_positive_price')
+with engine.begin() as conn:
+    conn.execute(AddConstraint(constraint, products))
+```
+
+### Dropping Constraints
+
+```python
+from sqlalchemy.schema import DropConstraint
+
+# Drop constraint
+constraint = users.constraints['ck_age']
+with engine.begin() as conn:
+    conn.execute(DropConstraint(constraint))
+
+# Drop with DDL
+with engine.begin() as conn:
+    conn.execute(DDL('ALTER TABLE users DROP CONSTRAINT ck_age'))
+```
+
+## Common Patterns
+
+### Soft Delete with Unique Constraint
+
+```python
+# Unique only when not deleted (PostgreSQL)
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('email', String(100)),
+    Column('deleted_at', DateTime, nullable=True),
+    Index(
+        'uq_active_email',
+        'email',
+        unique=True,
+        postgresql_where=(Column('deleted_at').is_(None))
+    )
+)
+```
+
+### Multi-Tenant Constraints
+
+```python
+# Unique per tenant
+data = Table(
+    'data',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('tenant_id', Integer, ForeignKey('tenants.id', ondelete='CASCADE')),
+    Column('code', String(50)),
+    UniqueConstraint('tenant_id', 'code', name='uq_tenant_code')
+)
+```
+
+### Audit Trail Constraints
+
+```python
+audit_log = Table(
+    'audit_log',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('user_id', Integer, ForeignKey('users.id', ondelete='SET NULL'), nullable=True),
+    Column('created_at', DateTime, nullable=False, server_default=func.now()),
+    Column('action', String(50)),
+    CheckConstraint(
+        "action IN ('create', 'update', 'delete', 'login', 'logout')",
+        name='ck_valid_action'
+    )
+)
+```
+
+### State Machine Constraints
+
+```python
+orders = Table(
+    'orders',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('status', String(20)),
+    Column('shipped_at', DateTime, nullable=True),
+    Column('delivered_at', DateTime, nullable=True),
+    CheckConstraint(
+        "(status = 'shipped' AND shipped_at IS NOT NULL) OR status != 'shipped'",
+        name='ck_shipped_date_required'
+    ),
+    CheckConstraint(
+        "(status = 'delivered' AND delivered_at IS NOT NULL) OR status != 'delivered'",
+        name='ck_delivered_date_required'
+    ),
+    CheckConstraint(
+        'delivered_at IS NULL OR shipped_at IS NOT NULL',
+        name='ck_shipped_before_delivered'
+    )
+)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="DDL Operations" href="/core/schema-ddl">
+    Learn about CREATE, DROP, and ALTER operations
+  </Card>
+  
+  <Card title="Data Types" href="/core/types-overview">
+    Explore SQLAlchemy's type system
+  </Card>
+</CardGroup>

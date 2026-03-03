@@ -1,0 +1,322 @@
+---
+title: Schema API
+description: SQLAlchemy schema definition API reference
+---
+
+Complete reference for SQLAlchemy's schema definition APIs.
+
+## MetaData
+
+Container for database schema information.
+
+```python
+from sqlalchemy import MetaData
+
+metadata = MetaData()
+```
+
+<ParamField path="schema" type="str">
+  Default schema name for all tables
+</ParamField>
+
+<ParamField path="naming_convention" type="dict">
+  Naming convention for constraints and indexes
+</ParamField>
+
+### Methods
+
+**create_all(bind)** - Create all tables
+
+```python
+metadata.create_all(engine)
+```
+
+**drop_all(bind)** - Drop all tables
+
+```python
+metadata.drop_all(engine)
+```
+
+**reflect(bind)** - Reflect tables from database
+
+```python
+metadata.reflect(engine)
+```
+
+## Table
+
+Define a database table.
+
+```python
+from sqlalchemy import Table, Column, Integer, String, MetaData
+
+metadata = MetaData()
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(50), nullable=False),
+    Column("email", String(100), unique=True),
+)
+```
+
+<ParamField path="name" type="str" required>
+  Table name
+</ParamField>
+
+<ParamField path="metadata" type="MetaData" required>
+  MetaData instance
+</ParamField>
+
+<ParamField path="*args" type="Column | Constraint">
+  Columns and constraints
+</ParamField>
+
+<ParamField path="schema" type="str">
+  Schema name
+</ParamField>
+
+### Properties
+
+**c** or **columns** - Column collection
+
+```python
+users.c.name
+users.columns.email
+```
+
+## Column
+
+Define a table column.
+
+```python
+from sqlalchemy import Column, Integer, String, ForeignKey
+
+Column("id", Integer, primary_key=True)
+Column("name", String(50), nullable=False)
+Column("email", String(100), unique=True, index=True)
+Column("user_id", Integer, ForeignKey("users.id"))
+```
+
+<ParamField path="name" type="str">
+  Column name (can be inferred in ORM)
+</ParamField>
+
+<ParamField path="type_" type="TypeEngine" required>
+  Column data type
+</ParamField>
+
+<ParamField path="primary_key" type="bool" default="False">
+  Part of primary key
+</ParamField>
+
+<ParamField path="nullable" type="bool" default="True">
+  Allow NULL values
+</ParamField>
+
+<ParamField path="unique" type="bool" default="False">
+  Add unique constraint
+</ParamField>
+
+<ParamField path="index" type="bool" default="False">
+  Create index on column
+</ParamField>
+
+<ParamField path="default" type="Any">
+  Python-side default value
+</ParamField>
+
+<ParamField path="server_default" type="str | FetchedValue">
+  Server-side default
+</ParamField>
+
+<ParamField path="onupdate" type="Any">
+  Python-side update value
+</ParamField>
+
+<ParamField path="autoincrement" type="bool | str" default="auto">
+  Auto-increment behavior
+</ParamField>
+
+## Constraints
+
+### PrimaryKeyConstraint
+
+```python
+from sqlalchemy import PrimaryKeyConstraint
+
+Table(
+    "users",
+    metadata,
+    Column("id", Integer),
+    Column("tenant_id", Integer),
+    PrimaryKeyConstraint("id", "tenant_id", name="pk_users")
+)
+```
+
+### ForeignKeyConstraint
+
+```python
+from sqlalchemy import ForeignKeyConstraint
+
+Table(
+    "addresses",
+    metadata,
+    Column("user_id", Integer),
+    Column("tenant_id", Integer),
+    ForeignKeyConstraint(
+        ["user_id", "tenant_id"],
+        ["users.id", "users.tenant_id"],
+        name="fk_addresses_users"
+    )
+)
+```
+
+### UniqueConstraint
+
+```python
+from sqlalchemy import UniqueConstraint
+
+Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("email", String(100)),
+    UniqueConstraint("email", name="uq_users_email")
+)
+```
+
+### CheckConstraint
+
+```python
+from sqlalchemy import CheckConstraint
+
+Table(
+    "products",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("price", Numeric),
+    CheckConstraint("price > 0", name="ck_products_price")
+)
+```
+
+## Indexes
+
+### Index
+
+```python
+from sqlalchemy import Index
+
+# Simple index
+Index("idx_users_email", users.c.email)
+
+# Composite index
+Index("idx_users_name_email", users.c.name, users.c.email)
+
+# Unique index
+Index("idx_users_email_unique", users.c.email, unique=True)
+
+# Partial index (PostgreSQL)
+Index(
+    "idx_active_users",
+    users.c.email,
+    postgresql_where=users.c.active == True
+)
+```
+
+## ForeignKey
+
+Define a foreign key reference.
+
+```python
+from sqlalchemy import ForeignKey
+
+Column("user_id", Integer, ForeignKey("users.id"))
+Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"))
+```
+
+<ParamField path="column" type="str" required>
+  Referenced column (table.column)
+</ParamField>
+
+<ParamField path="ondelete" type="str">
+  ON DELETE action: CASCADE, SET NULL, RESTRICT
+</ParamField>
+
+<ParamField path="onupdate" type="str">
+  ON UPDATE action: CASCADE, SET NULL, RESTRICT
+</ParamField>
+
+## Default Values
+
+### Python-side defaults
+
+```python
+import datetime
+
+Column("created_at", DateTime, default=datetime.datetime.utcnow)
+Column("status", String, default="active")
+```
+
+### Server-side defaults
+
+```python
+from sqlalchemy import func
+
+Column("created_at", DateTime, server_default=func.now())
+Column("id", Integer, server_default=text("nextval('user_id_seq')"))
+```
+
+### Computed columns
+
+```python
+from sqlalchemy import Computed
+
+Column("full_name", String, Computed("first_name || ' ' || last_name"))
+```
+
+### Identity columns
+
+```python
+from sqlalchemy import Identity
+
+Column("id", Integer, Identity(start=1000, increment=1))
+```
+
+## Sequences
+
+```python
+from sqlalchemy import Sequence
+
+user_id_seq = Sequence("user_id_seq", start=1000)
+Column("id", Integer, user_id_seq, server_default=user_id_seq.next_value())
+```
+
+## DDL
+
+### DDL Events
+
+```python
+from sqlalchemy import DDL, event
+
+event.listen(
+    users,
+    "after_create",
+    DDL("ALTER TABLE users ADD CONSTRAINT ck_email CHECK (email LIKE '%@%')")
+)
+```
+
+### CreateTable / DropTable
+
+```python
+from sqlalchemy.schema import CreateTable, DropTable
+
+# Get DDL as string
+print(CreateTable(users).compile(engine))
+
+# Execute DDL
+with engine.begin() as conn:
+    conn.execute(CreateTable(users))
+    conn.execute(DropTable(users))
+```

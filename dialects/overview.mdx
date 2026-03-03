@@ -1,0 +1,212 @@
+---
+title: Dialect System Overview
+description: Understanding SQLAlchemy's dialect architecture and supported databases
+---
+
+## What are Dialects?
+
+SQLAlchemy dialects are Python modules that provide database-specific implementations for communicating with different database backends. Each dialect handles the unique characteristics, SQL syntax variations, and DBAPI driver interfaces for a specific database system.
+
+## Dialect Architecture
+
+The dialect system consists of two main components:
+
+1. **Dialect Layer**: Handles database-specific SQL generation, type mapping, and feature support
+2. **DBAPI Layer**: Manages the connection to the database using Python Database API (DBAPI) drivers
+
+### Dialect URL Format
+
+Dialects are specified using database URLs with the following format:
+
+```
+dialect+driver://username:password@host:port/database
+```
+
+<Note>
+The `driver` portion is optional. If omitted, SQLAlchemy uses the default driver for that dialect.
+</Note>
+
+## Supported Databases
+
+SQLAlchemy includes built-in support for the following databases:
+
+<CardGroup cols={2}>
+  <Card title="PostgreSQL" icon="database" href="/dialects/postgresql">
+    Popular open-source relational database with advanced features
+  </Card>
+  <Card title="MySQL/MariaDB" icon="database" href="/dialects/mysql">
+    Widely-used open-source relational database systems
+  </Card>
+  <Card title="SQLite" icon="database" href="/dialects/sqlite">
+    Embedded, serverless SQL database engine
+  </Card>
+  <Card title="Oracle" icon="database" href="/dialects/oracle">
+    Enterprise relational database management system
+  </Card>
+  <Card title="SQL Server" icon="database" href="/dialects/mssql">
+    Microsoft's enterprise database platform
+  </Card>
+</CardGroup>
+
+## Plugin System
+
+SQLAlchemy features a plugin system that allows external dialects to be integrated using standard setuptools entry points. Third-party dialects can be:
+
+- Registered via setuptools entry points in `setup.py`
+- Registered at runtime using the `registry` module
+
+### Registering External Dialects
+
+<Tabs>
+  <Tab title="Entry Points">
+    ```python setup.py
+    from setuptools import setup
+
+    setup(
+        name='sqlalchemy-mydialect',
+        entry_points={
+            'sqlalchemy.dialects': [
+                'mydialect.driver = sqlalchemy_mydialect.driver:MyDialect',
+            ]
+        }
+    )
+    ```
+  </Tab>
+  <Tab title="Runtime Registration">
+    ```python
+    from sqlalchemy.dialects import registry
+
+    registry.register(
+        "mydialect.driver",
+        "sqlalchemy_mydialect.driver",
+        "MyDialect"
+    )
+
+    # Now you can use it
+    engine = create_engine("mydialect+driver://...")
+    ```
+  </Tab>
+</Tabs>
+
+## Choosing a Dialect
+
+When selecting a dialect, consider:
+
+| Factor | Description |
+|--------|-------------|
+| **Database Features** | Does the database support the features you need (JSON, arrays, full-text search)? |
+| **Driver Quality** | Is the DBAPI driver actively maintained and stable? |
+| **Async Support** | Do you need asynchronous database operations? |
+| **Performance** | What are the performance characteristics for your workload? |
+| **Deployment** | Where will the database run (cloud, on-premise, embedded)? |
+
+## Dialect Configuration
+
+Dialects can be configured with various parameters:
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    "postgresql+psycopg://user:pass@localhost/mydb",
+    # Pool configuration
+    pool_size=10,
+    max_overflow=20,
+    pool_recycle=3600,
+    # Dialect-specific options
+    connect_args={
+        "options": "-c timezone=utc"
+    }
+)
+```
+
+## Type System
+
+Each dialect provides:
+
+- **Generic types**: Mapped from `sqlalchemy.types` (e.g., `Integer`, `String`, `DateTime`)
+- **Dialect-specific types**: Database-specific types (e.g., PostgreSQL's `JSONB`, MySQL's `ENUM`)
+
+### Type Mapping
+
+Dialects maintain two key dictionaries:
+
+- **`colspecs`**: Maps generic types to dialect-specific implementations
+- **`ischema_names`**: Maps database type names (from reflection) to SQLAlchemy types
+
+<CodeGroup>
+```python Generic Types
+from sqlalchemy import Integer, String, DateTime
+
+# Works across all databases
+Column('id', Integer)
+Column('name', String(50))
+Column('created', DateTime)
+```
+
+```python Dialect-Specific Types
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy.dialects.mysql import ENUM
+
+# PostgreSQL-specific
+Column('data', JSONB)
+Column('tags', ARRAY(String))
+
+# MySQL-specific
+Column('status', ENUM('active', 'inactive'))
+```
+</CodeGroup>
+
+## Reflection and Introspection
+
+Dialects provide database introspection capabilities:
+
+```python
+from sqlalchemy import create_engine, MetaData, Table, inspect
+
+engine = create_engine("postgresql://...")
+inspector = inspect(engine)
+
+# Get table names
+tables = inspector.get_table_names()
+
+# Reflect a table structure
+metadata = MetaData()
+table = Table('users', metadata, autoload_with=engine)
+
+# Get column information
+columns = inspector.get_columns('users')
+```
+
+## Asyncio Support
+
+Several dialects support asynchronous operations:
+
+- **PostgreSQL**: `asyncpg`, `psycopg` (async mode)
+- **MySQL**: `aiomysql`, `asyncmy`
+- **SQLite**: `aiosqlite`
+- **Oracle**: `oracledb` (async mode)
+- **SQL Server**: `aioodbc`
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine
+
+engine = create_async_engine(
+    "postgresql+asyncpg://user:pass@localhost/mydb"
+)
+```
+
+<Warning>
+Async dialects require using SQLAlchemy's asyncio extension and cannot be mixed with synchronous code.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="PostgreSQL Dialect" icon="database" href="/dialects/postgresql">
+    Learn about PostgreSQL-specific features and drivers
+  </Card>
+  <Card title="Custom Dialects" icon="code" href="/dialects/custom-dialects">
+    Create your own dialect for custom databases
+  </Card>
+</CardGroup>

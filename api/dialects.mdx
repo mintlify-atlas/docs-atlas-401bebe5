@@ -1,0 +1,324 @@
+---
+title: Dialects API
+description: SQLAlchemy database dialects API reference
+---
+
+Complete reference for SQLAlchemy's dialect system.
+
+## Dialect System
+
+Dialects provide database-specific behavior and SQL generation.
+
+```python
+from sqlalchemy import create_engine
+
+# Dialect is determined from URL
+engine = create_engine("postgresql://...")
+print(engine.dialect.name)  # "postgresql"
+print(engine.dialect.driver)  # "psycopg"
+```
+
+## Supported Dialects
+
+### PostgreSQL
+
+**Drivers:**
+- `psycopg` (default, psycopg 3)
+- `psycopg2`
+- `asyncpg` (async)
+- `pg8000`
+
+```python
+# Default driver
+engine = create_engine("postgresql://user:pass@localhost/db")
+
+# Specific driver
+engine = create_engine("postgresql+psycopg://user:pass@localhost/db")
+engine = create_engine("postgresql+asyncpg://user:pass@localhost/db")
+```
+
+**Dialect-specific types:**
+```python
+from sqlalchemy.dialects.postgresql import (
+    ARRAY, HSTORE, JSON, JSONB, UUID, INET, CIDR, MACADDR, TSVECTOR, ENUM
+)
+```
+
+### MySQL/MariaDB
+
+**Drivers:**
+- `mysqlclient` (default)
+- `pymysql`
+- `mysql-connector-python`
+- `asyncmy` (async)
+- `aiomysql` (async)
+
+```python
+# Default driver
+engine = create_engine("mysql://user:pass@localhost/db")
+
+# Specific driver
+engine = create_engine("mysql+pymysql://user:pass@localhost/db")
+engine = create_engine("mysql+asyncmy://user:pass@localhost/db")
+```
+
+**Dialect-specific types:**
+```python
+from sqlalchemy.dialects.mysql import (
+    TINYINT, MEDIUMINT, BIGINT, DOUBLE, ENUM, SET, LONGTEXT, MEDIUMTEXT, JSON
+)
+```
+
+### SQLite
+
+**Drivers:**
+- `pysqlite` (built-in)
+- `aiosqlite` (async)
+
+```python
+# File database
+engine = create_engine("sqlite:///path/to/database.db")
+
+# In-memory
+engine = create_engine("sqlite:///:memory:")
+
+# Async
+engine = create_async_engine("sqlite+aiosqlite:///database.db")
+```
+
+**Dialect-specific types:**
+```python
+from sqlalchemy.dialects.sqlite import JSON, DATETIME, DATE, TIME
+```
+
+### Oracle
+
+**Drivers:**
+- `oracledb` (python-oracledb, recommended)
+- `cx_oracle` (legacy)
+
+```python
+# python-oracledb (default)
+engine = create_engine(
+    "oracle+oracledb://user:pass@localhost:1521/?service_name=XEPDB1"
+)
+
+# cx_Oracle (legacy)
+engine = create_engine(
+    "oracle+cx_oracle://user:pass@localhost:1521/?service_name=XEPDB1"
+)
+```
+
+**Dialect-specific types:**
+```python
+from sqlalchemy.dialects.oracle import (
+    VARCHAR2, NVARCHAR2, CLOB, NCLOB, BLOB, BFILE, NUMBER, BINARY_FLOAT, BINARY_DOUBLE
+)
+```
+
+### Microsoft SQL Server
+
+**Drivers:**
+- `pyodbc` (default)
+- `pymssql`
+
+```python
+# pyodbc
+engine = create_engine(
+    "mssql+pyodbc://user:pass@localhost/db?driver=ODBC+Driver+17+for+SQL+Server"
+)
+
+# pymssql
+engine = create_engine("mssql+pymssql://user:pass@localhost/db")
+```
+
+**Dialect-specific types:**
+```python
+from sqlalchemy.dialects.mssql import (
+    UNIQUEIDENTIFIER, DATETIME2, DATETIMEOFFSET, NVARCHAR, NTEXT, IMAGE, BIT
+)
+```
+
+## Dialect Features
+
+### Dialect Detection
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine(url)
+
+# Dialect name
+if engine.dialect.name == "postgresql":
+    print("Using PostgreSQL")
+
+# Driver name
+if engine.dialect.driver == "psycopg":
+    print("Using psycopg driver")
+
+# Feature detection
+if engine.dialect.supports_sequences:
+    print("Supports sequences")
+
+if engine.dialect.supports_native_boolean:
+    print("Supports native boolean type")
+```
+
+### Dialect-Specific SQL
+
+```python
+from sqlalchemy import text
+
+# PostgreSQL-specific
+if engine.dialect.name == "postgresql":
+    stmt = text("SELECT * FROM users WHERE data @> :filter")
+    result = conn.execute(stmt, {"filter": '{"role": "admin"}'})
+
+# MySQL-specific
+if engine.dialect.name == "mysql":
+    stmt = text("SELECT * FROM users FORCE INDEX (idx_name)")
+    result = conn.execute(stmt)
+```
+
+## Connection Arguments
+
+### PostgreSQL
+
+```python
+# Connect arguments
+engine = create_engine(
+    "postgresql://user:pass@localhost/db",
+    connect_args={
+        "connect_timeout": 10,
+        "options": "-c timezone=utc"
+    }
+)
+
+# SSL
+engine = create_engine(
+    "postgresql://user:pass@localhost/db",
+    connect_args={
+        "sslmode": "require",
+        "sslrootcert": "/path/to/ca.pem"
+    }
+)
+```
+
+### MySQL
+
+```python
+# Character set
+engine = create_engine(
+    "mysql://user:pass@localhost/db",
+    connect_args={
+        "charset": "utf8mb4"
+    }
+)
+
+# SSL
+engine = create_engine(
+    "mysql://user:pass@localhost/db",
+    connect_args={
+        "ssl": {
+            "ca": "/path/to/ca.pem",
+            "cert": "/path/to/client-cert.pem",
+            "key": "/path/to/client-key.pem"
+        }
+    }
+)
+```
+
+### SQLite
+
+```python
+# Timeout
+engine = create_engine(
+    "sqlite:///database.db",
+    connect_args={
+        "timeout": 15
+    }
+)
+
+# Enable foreign keys
+from sqlalchemy import event
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+```
+
+## Dialect-Specific Features
+
+### PostgreSQL ARRAY
+
+```python
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import String
+
+Column("tags", ARRAY(String(50)))
+
+# Query
+stmt = select(posts).where(posts.c.tags.contains(["python"]))
+```
+
+### PostgreSQL JSON/JSONB
+
+```python
+from sqlalchemy.dialects.postgresql import JSONB
+
+Column("data", JSONB)
+
+# Query JSON field
+stmt = select(users).where(users.c.data["role"] == "admin")
+stmt = select(users).where(users.c.data["settings"]["notifications"] == True)
+```
+
+### MySQL ENUM/SET
+
+```python
+from sqlalchemy.dialects.mysql import ENUM, SET
+
+Column("status", ENUM("active", "inactive", "pending"))
+Column("permissions", SET("read", "write", "delete"))
+```
+
+### SQL Server IDENTITY
+
+```python
+from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
+from sqlalchemy import Identity
+
+Column("id", Integer, Identity(start=1000, increment=1))
+Column("guid", UNIQUEIDENTIFIER, default=text("NEWID()"))
+```
+
+## Reflection
+
+```python
+from sqlalchemy import inspect, MetaData
+
+# Inspect database
+inspector = inspect(engine)
+
+# Get table names
+table_names = inspector.get_table_names()
+print(table_names)
+
+# Get columns
+columns = inspector.get_columns("users")
+for col in columns:
+    print(f"{col['name']}: {col['type']}")
+
+# Get foreign keys
+fks = inspector.get_foreign_keys("addresses")
+
+# Reflect table
+metadata = MetaData()
+users = Table("users", metadata, autoload_with=engine)
+```
+
+## Custom Dialects
+
+See [Custom Dialects](/dialects/custom-dialects) for creating your own dialect.

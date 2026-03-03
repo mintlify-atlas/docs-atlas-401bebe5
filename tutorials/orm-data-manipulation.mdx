@@ -1,0 +1,623 @@
+---
+title: 'ORM Data Manipulation'
+description: 'Master inserting, updating, and deleting data with SQLAlchemy ORM'
+---
+
+## Introduction
+
+This tutorial covers data manipulation operations using SQLAlchemy's ORM:
+
+- Inserting single and multiple objects
+- Updating object attributes and bulk updates
+- Deleting objects and cascading deletes
+- Working with the Unit of Work pattern
+- Performance optimization techniques
+
+## Setup: Define Your Models
+
+We'll use a complete example with relationships:
+
+```python
+from typing import List, Optional
+from datetime import datetime
+from sqlalchemy import create_engine, String, DateTime, ForeignKey, func, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+
+class Base(DeclarativeBase):
+    pass
+
+class Customer(Base):
+    __tablename__ = "customer"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    
+    orders: Mapped[List["Order"]] = relationship(
+        back_populates="customer", cascade="all, delete-orphan"
+    )
+    
+    def __repr__(self) -> str:
+        return f"Customer(id={self.id!r}, name={self.name!r})"
+
+class Order(Base):
+    __tablename__ = "order"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customer.id"))
+    order_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    total_amount: Mapped[float]
+    
+    customer: Mapped["Customer"] = relationship(back_populates="orders")
+    items: Mapped[List["OrderItem"]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
+    
+    def __repr__(self) -> str:
+        return f"Order(id={self.id!r}, total={self.total_amount!r})"
+
+class Item(Base):
+    __tablename__ = "item"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    price: Mapped[float]
+    
+    def __repr__(self) -> str:
+        return f"Item(id={self.id!r}, name={self.name!r}, price={self.price!r})"
+
+class OrderItem(Base):
+    __tablename__ = "order_item"
+    
+    order_id: Mapped[int] = mapped_column(ForeignKey("order.id"), primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("item.id"), primary_key=True)
+    quantity: Mapped[int]
+    price_paid: Mapped[float]  # Price at time of purchase
+    
+    order: Mapped["Order"] = relationship(back_populates="items")
+    item: Mapped["Item"] = relationship()
+
+engine = create_engine("sqlite://", echo=True)
+Base.metadata.create_all(engine)
+```
+
+## Inserting Data
+
+### Single Object Insert
+
+<Steps>
+  <Step title="Create the object">
+    Instantiate your ORM class:
+    
+    ```python
+    customer = Customer(
+        name="John Smith",
+        email="john@example.com"
+    )
+    ```
+  </Step>
+  
+  <Step title="Add to session">
+    Add the object to the session:
+    
+    ```python
+    with Session(engine) as session:
+        session.add(customer)
+        session.commit()
+    ```
+  </Step>
+  
+  <Step title="Access generated values">
+    After commit, primary keys and server defaults are available:
+    
+    ```python
+    print(f"Created customer with ID: {customer.id}")
+    print(f"Created at: {customer.created_at}")
+    ```
+  </Step>
+</Steps>
+
+### Multiple Objects Insert
+
+Use `add_all()` for multiple objects:
+
+```python
+with Session(engine) as session:
+    customers = [
+        Customer(name="Alice Johnson", email="alice@example.com"),
+        Customer(name="Bob Williams", email="bob@example.com"),
+        Customer(name="Charlie Brown", email="charlie@example.com")
+    ]
+    
+    session.add_all(customers)
+    session.commit()
+    
+    # All objects now have IDs
+    for customer in customers:
+        print(f"{customer.name}: ID {customer.id}")
+```
+
+<Tip>
+Objects added to a session automatically participate in the current transaction. Changes are flushed to the database before queries or when you commit.
+</Tip>
+
+### Inserting Related Objects
+
+SQLAlchemy automatically handles relationships:
+
+```python
+with Session(engine) as session:
+    # Create items catalog
+    items = [
+        Item(name="T-Shirt", price=19.99),
+        Item(name="Mug", price=12.50),
+        Item(name="Hat", price=24.99)
+    ]
+    session.add_all(items)
+    session.flush()  # Flush to get IDs without committing
+    
+    # Create customer with nested order
+    customer = Customer(
+        name="Jane Doe",
+        email="jane@example.com",
+        orders=[
+            Order(
+                total_amount=57.48,
+                items=[
+                    OrderItem(item=items[0], quantity=2, price_paid=19.99),
+                    OrderItem(item=items[1], quantity=1, price_paid=12.50),
+                    OrderItem(item=items[2], quantity=1, price_paid=24.99)
+                ]
+            )
+        ]
+    )
+    
+    session.add(customer)
+    session.commit()
+    
+    print(f"Created customer {customer.id} with {len(customer.orders)} order(s)")
+```
+
+<Note>
+When you add an object with relationships to a session, related objects are automatically added too (cascading). The cascade behavior is controlled by the `cascade` parameter on `relationship()`.
+</Note>
+
+### Bulk Insert Operations
+
+For performance-critical bulk inserts, use Core-style insert:
+
+```python
+from sqlalchemy import insert
+
+with Session(engine) as session:
+    # Bulk insert with execute
+    session.execute(
+        insert(Customer),
+        [
+            {"name": f"Customer {i}", "email": f"customer{i}@example.com"}
+            for i in range(1000)
+        ]
+    )
+    session.commit()
+```
+
+<Warning>
+Bulk inserts bypass ORM features like relationship cascading and Python-side defaults. Use them when you need raw performance for simple inserts.
+</Warning>
+
+### Insert with RETURNING
+
+Get the inserted objects back immediately:
+
+```python
+from sqlalchemy import insert
+
+with Session(engine) as session:
+    result = session.scalars(
+        insert(Customer).returning(Customer),
+        [
+            {"name": "Emma Davis", "email": "emma@example.com"},
+            {"name": "Frank Miller", "email": "frank@example.com"}
+        ]
+    )
+    
+    customers = result.all()
+    for customer in customers:
+        print(f"Inserted: {customer}")
+    
+    session.commit()
+```
+
+## Updating Data
+
+### Updating Object Attributes
+
+Simply modify attributes and commit:
+
+```python
+with Session(engine) as session:
+    # Fetch the object
+    stmt = select(Customer).where(Customer.name == "John Smith")
+    customer = session.scalars(stmt).one()
+    
+    # Modify attributes
+    customer.email = "john.smith@newdomain.com"
+    customer.name = "John R. Smith"
+    
+    # Commit changes
+    session.commit()
+```
+
+<Tip>
+The session tracks changes automatically. You don't need to explicitly mark objects as modified.
+</Tip>
+
+### Bulk Update with ORM
+
+Update multiple rows efficiently:
+
+```python
+from sqlalchemy import update
+
+with Session(engine) as session:
+    # Update using UPDATE statement
+    stmt = (
+        update(Item)
+        .where(Item.price < 20)
+        .values(price=Item.price * 1.1)  # 10% price increase
+    )
+    
+    result = session.execute(stmt)
+    print(f"Updated {result.rowcount} items")
+    session.commit()
+```
+
+### Conditional Updates
+
+```python
+from sqlalchemy import update, case
+
+with Session(engine) as session:
+    # Apply different updates based on conditions
+    stmt = (
+        update(Order)
+        .where(Order.total_amount > 100)
+        .values(
+            total_amount=case(
+                (Order.total_amount > 500, Order.total_amount * 0.9),  # 10% discount
+                (Order.total_amount > 200, Order.total_amount * 0.95),  # 5% discount
+                else_=Order.total_amount * 0.98  # 2% discount
+            )
+        )
+    )
+    
+    result = session.execute(stmt)
+    print(f"Applied discounts to {result.rowcount} orders")
+    session.commit()
+```
+
+### Update with Relationships
+
+Modifying related objects:
+
+```python
+with Session(engine) as session:
+    # Load customer with orders
+    stmt = select(Customer).where(Customer.id == 1)
+    customer = session.scalars(stmt).one()
+    
+    # Add a new order
+    new_order = Order(total_amount=99.99)
+    customer.orders.append(new_order)
+    
+    # Modify existing orders
+    for order in customer.orders:
+        if order.total_amount > 100:
+            order.total_amount *= 0.9  # Apply discount
+    
+    session.commit()
+```
+
+### Fetching Data Before Update
+
+Update and return modified rows:
+
+```python
+from sqlalchemy import update
+
+with Session(engine) as session:
+    # Update and return modified objects
+    stmt = (
+        update(Customer)
+        .where(Customer.email.like('%@example.com'))
+        .values(email=Customer.email.replace('@example.com', '@newdomain.com'))
+        .returning(Customer)
+    )
+    
+    updated_customers = session.scalars(stmt).all()
+    for customer in updated_customers:
+        print(f"Updated: {customer}")
+    
+    session.commit()
+```
+
+## Deleting Data
+
+### Delete Single Object
+
+```python
+with Session(engine) as session:
+    # Fetch and delete
+    stmt = select(Customer).where(Customer.id == 1)
+    customer = session.scalars(stmt).one()
+    
+    session.delete(customer)
+    session.commit()
+```
+
+<Note>
+When you delete an object with `cascade="all, delete-orphan"` on relationships, related objects are automatically deleted.
+</Note>
+
+### Cascade Deletes in Action
+
+```python
+with Session(engine) as session:
+    # Fetch customer with orders
+    stmt = select(Customer).where(Customer.id == 2)
+    customer = session.scalars(stmt).one()
+    
+    print(f"Customer has {len(customer.orders)} orders")
+    for order in customer.orders:
+        print(f"  Order {order.id} has {len(order.items)} items")
+    
+    # Delete customer - cascades to orders and order_items
+    session.delete(customer)
+    session.commit()
+    
+    print("Customer and all related orders deleted!")
+```
+
+### Bulk Delete
+
+```python
+from sqlalchemy import delete
+
+with Session(engine) as session:
+    # Delete all orders older than a date
+    from datetime import datetime, timedelta
+    
+    cutoff_date = datetime.now() - timedelta(days=90)
+    stmt = delete(Order).where(Order.order_date < cutoff_date)
+    
+    result = session.execute(stmt)
+    print(f"Deleted {result.rowcount} old orders")
+    session.commit()
+```
+
+<Warning>
+Bulk delete operations bypass ORM cascade logic. If you need cascading deletes, load the objects first and use `session.delete()`.
+</Warning>
+
+### Delete with Returning
+
+Get deleted objects back:
+
+```python
+from sqlalchemy import delete
+
+with Session(engine) as session:
+    stmt = (
+        delete(Item)
+        .where(Item.price < 10)
+        .returning(Item)
+    )
+    
+    deleted_items = session.scalars(stmt).all()
+    for item in deleted_items:
+        print(f"Deleted: {item}")
+    
+    session.commit()
+```
+
+### Orphan Removal
+
+Removing items from a collection deletes them when using `delete-orphan`:
+
+```python
+with Session(engine) as session:
+    stmt = select(Order).where(Order.id == 1)
+    order = session.scalars(stmt).one()
+    
+    # Remove first item - it becomes an orphan and gets deleted
+    removed_item = order.items.pop(0)
+    
+    session.commit()  # The OrderItem is deleted from database
+```
+
+## Understanding the Unit of Work
+
+The Session implements the Unit of Work pattern:
+
+```python
+with Session(engine) as session:
+    # 1. Add objects (not yet in database)
+    customer = Customer(name="Test User", email="test@example.com")
+    session.add(customer)
+    print(f"Customer ID before flush: {customer.id}")  # None
+    
+    # 2. Flush sends INSERT but doesn't commit
+    session.flush()
+    print(f"Customer ID after flush: {customer.id}")  # Has ID now
+    
+    # 3. Can query the object in the same transaction
+    stmt = select(Customer).where(Customer.id == customer.id)
+    same_customer = session.scalars(stmt).one()
+    assert same_customer is customer  # Same object!
+    
+    # 4. Modify the object
+    customer.email = "updated@example.com"
+    
+    # 5. Commit finalizes all changes
+    session.commit()
+```
+
+<Tip>
+Use `flush()` when you need database-generated values (like IDs) but want to continue working in the same transaction. Use `commit()` to finalize all changes.
+</Tip>
+
+## Performance Optimization
+
+### Batch Processing
+
+Process large datasets efficiently:
+
+```python
+with Session(engine) as session:
+    batch_size = 1000
+    
+    for i in range(0, 10000, batch_size):
+        customers = [
+            Customer(
+                name=f"Customer {j}",
+                email=f"customer{j}@example.com"
+            )
+            for j in range(i, i + batch_size)
+        ]
+        
+        session.add_all(customers)
+        session.flush()  # Flush each batch
+    
+    session.commit()  # Single commit at the end
+```
+
+### Using expire_on_commit
+
+Control when objects are expired:
+
+```python
+from sqlalchemy.orm import sessionmaker
+
+# Create session factory with expire_on_commit=False
+SessionLocal = sessionmaker(engine, expire_on_commit=False)
+
+with SessionLocal() as session:
+    customer = Customer(name="Alice", email="alice@example.com")
+    session.add(customer)
+    session.commit()
+    
+    # Object attributes are still accessible without new query
+    print(customer.name)  # No SELECT issued
+```
+
+<Note>
+Setting `expire_on_commit=False` keeps objects accessible after commit without re-querying, but be aware they may become stale if modified elsewhere.
+</Note>
+
+## Complete Example: Order Management System
+
+```python
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+
+def create_order(session: Session, customer_id: int, item_purchases: list) -> Order:
+    """Create a new order with items."""
+    total = sum(item['price'] * item['quantity'] for item in item_purchases)
+    
+    order = Order(customer_id=customer_id, total_amount=total)
+    
+    for purchase in item_purchases:
+        order_item = OrderItem(
+            item_id=purchase['item_id'],
+            quantity=purchase['quantity'],
+            price_paid=purchase['price']
+        )
+        order.items.append(order_item)
+    
+    session.add(order)
+    return order
+
+def update_order_totals(session: Session) -> int:
+    """Recalculate all order totals."""
+    stmt = select(Order)
+    updated = 0
+    
+    for order in session.scalars(stmt):
+        new_total = sum(item.price_paid * item.quantity for item in order.items)
+        if order.total_amount != new_total:
+            order.total_amount = new_total
+            updated += 1
+    
+    return updated
+
+def cancel_old_orders(session: Session, days: int) -> int:
+    """Cancel orders older than specified days."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import delete
+    
+    cutoff = datetime.now() - timedelta(days=days)
+    stmt = delete(Order).where(Order.order_date < cutoff)
+    result = session.execute(stmt)
+    return result.rowcount
+
+# Usage
+with Session(engine) as session:
+    # Create items
+    items = [
+        Item(name="Widget", price=29.99),
+        Item(name="Gadget", price=49.99),
+        Item(name="Doohickey", price=19.99)
+    ]
+    session.add_all(items)
+    session.flush()
+    
+    # Create customer
+    customer = Customer(name="Sarah Connor", email="sarah@example.com")
+    session.add(customer)
+    session.flush()
+    
+    # Create order
+    order = create_order(
+        session,
+        customer.id,
+        [
+            {'item_id': items[0].id, 'quantity': 2, 'price': items[0].price},
+            {'item_id': items[1].id, 'quantity': 1, 'price': items[1].price}
+        ]
+    )
+    
+    session.commit()
+    print(f"Created order {order.id} for ${order.total_amount:.2f}")
+
+with Session(engine) as session:
+    updated = update_order_totals(session)
+    session.commit()
+    print(f"Updated {updated} order totals")
+
+with Session(engine) as session:
+    deleted = cancel_old_orders(session, 30)
+    session.commit()
+    print(f"Cancelled {deleted} old orders")
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Advanced Queries" icon="magnifying-glass" href="/tutorials/orm-queries">
+    Learn complex query patterns with joins and aggregations
+  </Card>
+  
+  <Card title="Working with Relationships" icon="link" href="/tutorials/orm-related-objects">
+    Master relationship loading strategies and patterns
+  </Card>
+</CardGroup>
+
+## Key Takeaways
+
+- Use `session.add()` for single inserts, `session.add_all()` for multiple
+- The session automatically tracks changes to objects
+- Use `session.flush()` to get database-generated values without committing
+- Cascade settings on relationships control automatic delete/update behavior
+- For bulk operations, use Core-style `insert()`, `update()`, and `delete()`
+- The Unit of Work pattern batches changes for efficiency

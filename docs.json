@@ -1,122 +1,175 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "SQLAlchemy",
+  "theme": "sequoia",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#BB4444",
+    "light": "#DD6666",
+    "dark": "#992222"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/sqlalchemy/sqlalchemy"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/sqlalchemy/sqlalchemy"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Tutorials",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "tutorials/overview",
+              "tutorials/unified-tutorial",
+              "tutorials/orm-data-manipulation",
+              "tutorials/orm-queries",
+              "tutorials/orm-related-objects"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "concepts/engine",
+              "concepts/connections",
+              "concepts/metadata",
+              "concepts/schema"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "ORM",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "ORM Essentials",
             "pages": [
-              "api-reference/introduction"
+              "orm/overview",
+              "orm/declarative-config",
+              "orm/mapped-classes",
+              "orm/relationships"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "ORM Sessions",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "orm/session-basics",
+              "orm/session-api",
+              "orm/session-state"
+            ]
+          },
+          {
+            "group": "ORM Querying",
+            "pages": [
+              "orm/query-guide",
+              "orm/queryable-attributes",
+              "orm/loading-techniques"
+            ]
+          },
+          {
+            "group": "Advanced ORM",
+            "pages": [
+              "orm/inheritance-mapping",
+              "orm/extensions",
+              "orm/events"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Core SQL",
+        "groups": [
+          {
+            "group": "SQL Expression Language",
+            "pages": [
+              "core/overview",
+              "core/expression-api",
+              "core/selects",
+              "core/inserts-updates-deletes"
+            ]
+          },
+          {
+            "group": "Schema Definition",
+            "pages": [
+              "core/schema-table",
+              "core/schema-constraints",
+              "core/schema-ddl"
+            ]
+          },
+          {
+            "group": "Data Types",
+            "pages": [
+              "core/types-overview",
+              "core/types-standard",
+              "core/types-custom"
+            ]
+          },
+          {
+            "group": "Engine & Connections",
+            "pages": [
+              "core/engines",
+              "core/connections",
+              "core/pooling"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Dialects",
+        "groups": [
+          {
+            "group": "Database Support",
+            "pages": [
+              "dialects/overview",
+              "dialects/postgresql",
+              "dialects/mysql",
+              "dialects/sqlite",
+              "dialects/oracle",
+              "dialects/mssql"
+            ]
+          },
+          {
+            "group": "Dialect Development",
+            "pages": [
+              "dialects/custom-dialects",
+              "dialects/type-migration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API Documentation",
+            "pages": [
+              "api/index",
+              "api/orm",
+              "api/core",
+              "api/engine",
+              "api/schema",
+              "api/types",
+              "api/pool",
+              "api/dialects",
+              "api/events"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

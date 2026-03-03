@@ -1,0 +1,671 @@
+---
+title: Schema Definition
+description: Learn how to define database schemas in SQLAlchemy using Tables, Columns, Constraints, and other schema constructs.
+---
+
+# Schema Definition
+
+SQLAlchemy Core provides a comprehensive set of tools for defining database schemas programmatically. The schema system allows you to define tables, columns, constraints, indexes, and other database objects in Python code.
+
+## Overview
+
+A complete schema definition includes:
+
+```python
+from sqlalchemy import (
+    MetaData, Table, Column,
+    Integer, String, DateTime, Numeric,
+    ForeignKey, UniqueConstraint, CheckConstraint, Index
+)
+from datetime import datetime
+
+metadata = MetaData()
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("username", String(50), nullable=False, unique=True),
+    Column("email", String(100), nullable=False),
+    Column("created_at", DateTime, default=datetime.utcnow),
+    UniqueConstraint("email", name="uq_users_email"),
+    Index("ix_users_username", "username")
+)
+
+orders = Table(
+    "orders",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id"), nullable=False),
+    Column("total", Numeric(10, 2)),
+    Column("order_date", DateTime, default=datetime.utcnow),
+    CheckConstraint("total >= 0", name="ck_orders_positive_total")
+)
+```
+
+## Defining Tables
+
+### Basic Table Definition
+
+```python
+from sqlalchemy import MetaData, Table, Column, Integer, String
+
+metadata = MetaData()
+
+users = Table(
+    "users",                    # Table name
+    metadata,                   # MetaData instance
+    Column("id", Integer, primary_key=True),
+    Column("name", String(50)),
+    Column("email", String(100))
+)
+```
+
+### Table with Schema
+
+```python
+# Table in a specific schema
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(50)),
+    schema="myapp"  # Creates myapp.users
+)
+```
+
+### Table Parameters
+
+<ParamField path="name" type="str" required>
+  Table name in the database.
+</ParamField>
+
+<ParamField path="metadata" type="MetaData" required>
+  MetaData instance that will hold this table.
+</ParamField>
+
+<ParamField path="*args" type="Column | Constraint | Index">
+  Column definitions, constraints, and indexes.
+</ParamField>
+
+<ParamField path="schema" type="str">
+  Schema name for the table (e.g., "public", "myapp").
+</ParamField>
+
+<ParamField path="autoload_with" type="Engine | Connection">
+  Reflect the table structure from an existing database.
+  
+  ```python
+  users = Table("users", metadata, autoload_with=engine)
+  ```
+</ParamField>
+
+<ParamField path="extend_existing" type="bool" default="False">
+  If True, add columns and constraints to an existing Table definition.
+</ParamField>
+
+<ParamField path="keep_existing" type="bool" default="False">
+  If True, don't modify an existing Table definition.
+</ParamField>
+
+<ParamField path="info" type="dict">
+  Optional dictionary for storing custom metadata.
+  
+  ```python
+  users = Table(
+      "users",
+      metadata,
+      Column("id", Integer, primary_key=True),
+      info={"description": "User accounts table"}
+  )
+  ```
+</ParamField>
+
+## Defining Columns
+
+### Column Types
+
+SQLAlchemy provides type objects for all common SQL types:
+
+```python
+from sqlalchemy import (
+    Integer, SmallInteger, BigInteger,
+    String, Text, Unicode, UnicodeText,
+    Boolean,
+    Date, DateTime, Time, Interval,
+    Numeric, Float,
+    LargeBinary,
+    JSON, ARRAY
+)
+
+products = Table(
+    "products",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(100), nullable=False),
+    Column("description", Text),
+    Column("price", Numeric(10, 2)),
+    Column("in_stock", Boolean, default=True),
+    Column("created_at", DateTime),
+    Column("metadata", JSON),
+    Column("tags", ARRAY(String(50)))  # PostgreSQL
+)
+```
+
+### String Types
+
+<Steps>
+  <Step title="String">
+    Variable-length string with a maximum length.
+    
+    ```python
+    Column("username", String(50))
+    Column("email", String(100))
+    ```
+  </Step>
+  
+  <Step title="Text">
+    Unbounded variable-length string.
+    
+    ```python
+    Column("description", Text)
+    Column("content", Text)
+    ```
+  </Step>
+  
+  <Step title="Unicode / UnicodeText">
+    Unicode-safe variants of String and Text.
+    
+    ```python
+    Column("name", Unicode(100))
+    Column("bio", UnicodeText)
+    ```
+  </Step>
+</Steps>
+
+### Numeric Types
+
+```python
+# Integer types
+Column("quantity", Integer)           # Standard integer
+Column("small_num", SmallInteger)     # 16-bit integer
+Column("big_num", BigInteger)         # 64-bit integer
+
+# Decimal/Floating point
+Column("price", Numeric(10, 2))       # Decimal with precision
+Column("percentage", Float)            # Floating point
+Column("amount", Numeric(precision=10, scale=2))  # Explicit precision
+```
+
+### Date and Time Types
+
+```python
+from datetime import datetime, date, time, timedelta
+
+events = Table(
+    "events",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("event_date", Date),
+    Column("event_time", Time),
+    Column("created_at", DateTime),
+    Column("duration", Interval)
+)
+```
+
+### JSON and Binary Types
+
+```python
+# JSON column (PostgreSQL, MySQL 5.7+, SQLite 3.9+)
+Column("settings", JSON)
+
+# Binary data
+Column("file_data", LargeBinary)
+Column("thumbnail", LargeBinary(length=1024*1024))  # 1MB limit
+```
+
+### Column Parameters
+
+<ParamField path="name" type="str" required>
+  Column name in the table.
+</ParamField>
+
+<ParamField path="type_" type="TypeEngine" required>
+  Column data type (Integer, String, etc.).
+</ParamField>
+
+<ParamField path="primary_key" type="bool" default="False">
+  Mark as part of the primary key.
+  
+  ```python
+  Column("id", Integer, primary_key=True)
+  ```
+</ParamField>
+
+<ParamField path="nullable" type="bool" default="True">
+  Whether NULL values are allowed.
+  
+  ```python
+  Column("email", String(100), nullable=False)
+  ```
+</ParamField>
+
+<ParamField path="unique" type="bool" default="False">
+  Create a unique constraint on this column.
+  
+  ```python
+  Column("username", String(50), unique=True)
+  ```
+</ParamField>
+
+<ParamField path="index" type="bool" default="False">
+  Create an index on this column.
+  
+  ```python
+  Column("email", String(100), index=True)
+  ```
+</ParamField>
+
+<ParamField path="default" type="Any">
+  Default value for the column (Python-side).
+  
+  ```python
+  from datetime import datetime
+  Column("created_at", DateTime, default=datetime.utcnow)
+  Column("active", Boolean, default=True)
+  ```
+</ParamField>
+
+<ParamField path="server_default" type="str | text()">
+  Server-side default value.
+  
+  ```python
+  from sqlalchemy import text
+  Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP"))
+  Column("id", Integer, server_default=text("nextval('user_id_seq')"))
+  ```
+</ParamField>
+
+<ParamField path="autoincrement" type="bool | str" default="auto">
+  For integer primary keys, enable auto-increment.
+  
+  ```python
+  Column("id", Integer, primary_key=True, autoincrement=True)
+  ```
+</ParamField>
+
+<ParamField path="comment" type="str">
+  Column comment (supported by PostgreSQL, MySQL, Oracle).
+  
+  ```python
+  Column("user_id", Integer, comment="Foreign key to users table")
+  ```
+</ParamField>
+
+## Constraints
+
+### Primary Key Constraint
+
+```python
+# Single column primary key
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True)
+)
+
+# Composite primary key
+user_settings = Table(
+    "user_settings",
+    metadata,
+    Column("user_id", Integer, primary_key=True),
+    Column("setting_name", String(50), primary_key=True),
+    Column("setting_value", String(200))
+)
+
+# Using PrimaryKeyConstraint
+from sqlalchemy import PrimaryKeyConstraint
+
+user_settings = Table(
+    "user_settings",
+    metadata,
+    Column("user_id", Integer),
+    Column("setting_name", String(50)),
+    Column("setting_value", String(200)),
+    PrimaryKeyConstraint("user_id", "setting_name", name="pk_user_settings")
+)
+```
+
+### Foreign Key Constraint
+
+```python
+from sqlalchemy import ForeignKey, ForeignKeyConstraint
+
+# Column-level foreign key
+orders = Table(
+    "orders",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id")),
+    Column("total", Numeric(10, 2))
+)
+
+# Table-level foreign key
+order_items = Table(
+    "order_items",
+    metadata,
+    Column("order_id", Integer),
+    Column("product_id", Integer),
+    Column("quantity", Integer),
+    ForeignKeyConstraint(
+        ["order_id"],
+        ["orders.id"],
+        name="fk_order_items_order_id",
+        ondelete="CASCADE",
+        onupdate="CASCADE"
+    )
+)
+
+# Composite foreign key
+order_details = Table(
+    "order_details",
+    metadata,
+    Column("order_id", Integer),
+    Column("line_num", Integer),
+    Column("user_id", Integer),
+    Column("setting_name", String(50)),
+    ForeignKeyConstraint(
+        ["user_id", "setting_name"],
+        ["user_settings.user_id", "user_settings.setting_name"]
+    )
+)
+```
+
+### Unique Constraint
+
+```python
+from sqlalchemy import UniqueConstraint
+
+# Column-level unique
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("username", String(50), unique=True),
+    Column("email", String(100))
+)
+
+# Table-level unique constraint
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("username", String(50)),
+    Column("email", String(100)),
+    UniqueConstraint("email", name="uq_users_email")
+)
+
+# Composite unique constraint
+user_roles = Table(
+    "user_roles",
+    metadata,
+    Column("user_id", Integer),
+    Column("role_id", Integer),
+    UniqueConstraint("user_id", "role_id", name="uq_user_roles")
+)
+```
+
+### Check Constraint
+
+```python
+from sqlalchemy import CheckConstraint
+
+products = Table(
+    "products",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("price", Numeric(10, 2)),
+    Column("quantity", Integer),
+    Column("status", String(20)),
+    CheckConstraint("price >= 0", name="ck_products_positive_price"),
+    CheckConstraint("quantity >= 0", name="ck_products_positive_quantity"),
+    CheckConstraint(
+        "status IN ('active', 'inactive', 'discontinued')",
+        name="ck_products_valid_status"
+    )
+)
+```
+
+## Indexes
+
+### Simple Index
+
+```python
+from sqlalchemy import Index
+
+# Column-level index
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("email", String(100), index=True)
+)
+
+# Table-level index
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("email", String(100)),
+    Index("ix_users_email", "email")
+)
+```
+
+### Composite Index
+
+```python
+orders = Table(
+    "orders",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer),
+    Column("order_date", DateTime),
+    Column("status", String(20)),
+    Index("ix_orders_user_date", "user_id", "order_date"),
+    Index("ix_orders_status_date", "status", "order_date")
+)
+```
+
+### Unique Index
+
+```python
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("username", String(50)),
+    Index("ix_users_username", "username", unique=True)
+)
+```
+
+### Partial Index (PostgreSQL)
+
+```python
+orders = Table(
+    "orders",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("status", String(20)),
+    Column("total", Numeric(10, 2)),
+    Index(
+        "ix_orders_active",
+        "total",
+        postgresql_where=text("status = 'active'")
+    )
+)
+```
+
+### Expression-Based Index
+
+```python
+from sqlalchemy import func
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("email", String(100)),
+    Index("ix_users_email_lower", func.lower("email"))
+)
+```
+
+## Default Values and Generated Columns
+
+### Python-Side Defaults
+
+```python
+from datetime import datetime
+from uuid import uuid4
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("uuid", String(36), default=lambda: str(uuid4())),
+    Column("created_at", DateTime, default=datetime.utcnow),
+    Column("active", Boolean, default=True)
+)
+```
+
+### Server-Side Defaults
+
+```python
+from sqlalchemy import text
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
+    Column("updated_at", DateTime, onupdate=datetime.utcnow),
+    Column("uuid", String(36), server_default=text("gen_random_uuid()"))  # PostgreSQL
+)
+```
+
+### Computed Columns
+
+```python
+from sqlalchemy import Computed
+
+# PostgreSQL, MySQL 5.7+, SQLite 3.31+
+products = Table(
+    "products",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("price", Numeric(10, 2)),
+    Column("tax_rate", Numeric(4, 2)),
+    Column(
+        "price_with_tax",
+        Numeric(10, 2),
+        Computed("price * (1 + tax_rate)")
+    )
+)
+```
+
+### Identity Columns (PostgreSQL 10+, Oracle, SQL Server)
+
+```python
+from sqlalchemy import Identity
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, Identity(start=1000, increment=1), primary_key=True),
+    Column("name", String(50))
+)
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use Explicit Names for Constraints">
+    Always name your constraints for easier migrations:
+    
+    ```python
+    users = Table(
+        "users",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("email", String(100)),
+        UniqueConstraint("email", name="uq_users_email"),
+        Index("ix_users_email", "email")
+    )
+    ```
+  </Step>
+  
+  <Step title="Set Nullable Appropriately">
+    Be explicit about NULL constraints:
+    
+    ```python
+    users = Table(
+        "users",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("username", String(50), nullable=False),
+        Column("bio", Text, nullable=True)  # Optional field
+    )
+    ```
+  </Step>
+  
+  <Step title="Use ForeignKey Cascades">
+    Define cascade behavior for foreign keys:
+    
+    ```python
+    orders = Table(
+        "orders",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "user_id",
+            Integer,
+            ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE")
+        )
+    )
+    ```
+  </Step>
+  
+  <Step title="Index Foreign Keys">
+    Always index foreign key columns for query performance:
+    
+    ```python
+    orders = Table(
+        "orders",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("user_id", Integer, ForeignKey("users.id"), index=True)
+    )
+    ```
+  </Step>
+  
+  <Step title="Use Check Constraints for Data Integrity">
+    Enforce business rules at the database level:
+    
+    ```python
+    products = Table(
+        "products",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("price", Numeric(10, 2)),
+        Column("discount_price", Numeric(10, 2)),
+        CheckConstraint("price >= 0"),
+        CheckConstraint("discount_price IS NULL OR discount_price < price")
+    )
+    ```
+  </Step>
+</Steps>
+
+## See Also
+
+- [Engine Architecture](/concepts/engine) - Creating database engines
+- [MetaData System](/concepts/metadata) - Organizing schema definitions
+- [Connection Management](/concepts/connections) - Executing DDL operations

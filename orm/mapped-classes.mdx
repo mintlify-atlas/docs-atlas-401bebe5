@@ -1,0 +1,552 @@
+---
+title: Mapped Classes
+description: Defining ORM mapped classes with Mapped[], mapped_column(), and column properties
+---
+
+## Overview
+
+Mapped classes are Python classes that represent database tables. Each instance of a mapped class corresponds to a row in the table. SQLAlchemy 2.0+ uses type annotations with `Mapped[]` to define column mappings.
+
+## Basic Mapped Class
+
+```python
+from sqlalchemy import String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = "user_account"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    email: Mapped[str]
+```
+
+## Mapped[] Type Annotation
+
+The `Mapped[]` generic type indicates that an attribute is mapped to a database column.
+
+### Required vs Optional
+
+<Tabs>
+  <Tab title="Required (NOT NULL)">
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        
+        # NOT NULL - no Optional[]
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str]
+        email: Mapped[str]
+        created_at: Mapped[datetime]
+    ```
+  </Tab>
+
+  <Tab title="Optional (NULL)">
+    ```python
+    from typing import Optional
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str]
+        
+        # NULL - use Optional[]
+        email: Mapped[Optional[str]]
+        phone: Mapped[Optional[str]]
+        bio: Mapped[Optional[str]]
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+The `Mapped[]` annotation automatically determines `nullable` from the presence of `Optional[]`. You can override with `nullable=True/False` in `mapped_column()`.
+</Note>
+
+## mapped_column() Function
+
+The `mapped_column()` function declares an ORM-mapped column.
+
+### Function Signature
+
+```python
+def mapped_column(
+    __name_pos: Optional[str | TypeEngine] = None,
+    __type_pos: Optional[TypeEngine] = None,
+    /,
+    *args: SchemaEventTarget,
+    # Column parameters
+    name: Optional[str] = None,
+    type_: Optional[TypeEngine] = None,
+    autoincrement: AutoIncrementType = "auto",
+    nullable: Optional[bool] = None,
+    primary_key: bool = False,
+    unique: Optional[bool] = None,
+    index: Optional[bool] = None,
+    default: Any = None,
+    server_default: Optional[str | FetchedValue] = None,
+    onupdate: Optional[Any] = None,
+    server_onupdate: Optional[FetchedValue] = None,
+    # ORM-specific
+    deferred: bool = False,
+    deferred_group: Optional[str] = None,
+    deferred_raiseload: Optional[bool] = None,
+    # Dataclass parameters
+    init: bool = True,
+    repr: bool = True,
+    default_factory: Optional[Callable] = None,
+    compare: bool = True,
+    kw_only: bool = False,
+    # Other
+    doc: Optional[str] = None,
+    key: Optional[str] = None,
+    info: Optional[dict] = None,
+    **kw: Any,
+) -> MappedColumn[Any]:
+```
+
+### Basic Usage
+
+<Steps>
+  <Step title="Minimal Declaration">
+    Type is derived from `Mapped[]` annotation:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        
+        # Type derived from Mapped[int]
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        # Type derived from Mapped[str]
+        name: Mapped[str]
+    ```
+  </Step>
+
+  <Step title="Explicit Type">
+    Override the derived type:
+
+    ```python
+    from sqlalchemy import String, Text
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        # VARCHAR(50)
+        name: Mapped[str] = mapped_column(String(50))
+        
+        # TEXT type
+        bio: Mapped[str] = mapped_column(Text)
+    ```
+  </Step>
+
+  <Step title="With Constraints">
+    Add database constraints:
+
+    ```python
+    from sqlalchemy import String, CheckConstraint
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str] = mapped_column(String(50), unique=True)
+        email: Mapped[str] = mapped_column(String(100), index=True)
+        age: Mapped[int] = mapped_column(CheckConstraint("age >= 0"))
+    ```
+  </Step>
+</Steps>
+
+### Key Parameters
+
+<ParamField path="primary_key" type="bool" default="False">
+  Marks column as part of the primary key.
+
+  ```python
+  id: Mapped[int] = mapped_column(primary_key=True)
+  ```
+</ParamField>
+
+<ParamField path="nullable" type="bool">
+  Explicitly set NULL/NOT NULL. Auto-derived from `Optional[]` if not set.
+
+  ```python
+  # Explicitly nullable despite no Optional[]
+  email: Mapped[str] = mapped_column(nullable=True)
+  ```
+</ParamField>
+
+<ParamField path="unique" type="bool">
+  Create UNIQUE constraint.
+
+  ```python
+  email: Mapped[str] = mapped_column(unique=True)
+  ```
+</ParamField>
+
+<ParamField path="index" type="bool">
+  Create an index on the column.
+
+  ```python
+  email: Mapped[str] = mapped_column(index=True)
+  ```
+</ParamField>
+
+<ParamField path="default" type="Any">
+  Python-side default value.
+
+  ```python
+  from datetime import datetime
+  
+  created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+  ```
+</ParamField>
+
+<ParamField path="server_default" type="str | FetchedValue">
+  Server-side default (SQL expression).
+
+  ```python
+  from sqlalchemy import func
+  
+  created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+  ```
+</ParamField>
+
+<ParamField path="deferred" type="bool" default="False">
+  Load column only when explicitly accessed (lazy loading).
+
+  ```python
+  # Large text not loaded by default
+  bio: Mapped[str] = mapped_column(Text, deferred=True)
+  ```
+</ParamField>
+
+### Foreign Keys
+
+Define relationships between tables:
+
+```python
+from sqlalchemy import ForeignKey
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+
+class Address(Base):
+    __tablename__ = "addresses"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    
+    # Foreign key to users.id
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+```
+
+<Tabs>
+  <Tab title="String Reference">
+    ```python
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    ```
+    References table and column by string name.
+  </Tab>
+
+  <Tab title="Column Reference">
+    ```python
+    user_id: Mapped[int] = mapped_column(ForeignKey(User.id))
+    ```
+    Direct reference to the column object.
+  </Tab>
+
+  <Tab title="With ON DELETE">
+    ```python
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
+    ```
+    Cascade deletes to related rows.
+  </Tab>
+</Tabs>
+
+## Column Properties
+
+Use `column_property()` for SQL expressions as attributes:
+
+```python
+from sqlalchemy.orm import column_property
+from sqlalchemy import select, func
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    first_name: Mapped[str]
+    last_name: Mapped[str]
+    
+    # Computed property
+    full_name: Mapped[str] = column_property(
+        first_name + " " + last_name
+    )
+```
+
+### Deferred Column Properties
+
+Load expensive expressions only when accessed:
+
+```python
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    
+    # Count addresses (not loaded by default)
+    address_count: Mapped[int] = column_property(
+        select(func.count(Address.id))
+        .where(Address.user_id == id)
+        .correlate_except(Address)
+        .scalar_subquery(),
+        deferred=True
+    )
+```
+
+## Composite Columns
+
+Group multiple columns into a single Python object:
+
+```python
+from dataclasses import dataclass
+from sqlalchemy.orm import composite
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+class Vertex(Base):
+    __tablename__ = "vertices"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    x: Mapped[int]
+    y: Mapped[int]
+    
+    # Composite of x, y columns
+    point: Mapped[Point] = composite(
+        Point, x, y
+    )
+
+# Usage
+v = Vertex(point=Point(3, 4))
+print(v.point.x)  # 3
+print(v.x)  # 3 - both work
+```
+
+## Dataclass Integration
+
+Use native Python dataclasses with ORM mapping:
+
+```python
+from sqlalchemy.orm import MappedAsDataclass
+
+class Base(MappedAsDataclass, DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(init=False, primary_key=True)
+    name: Mapped[str]
+    email: Mapped[str] = mapped_column(default="")
+
+# Use dataclass constructor
+user = User(name="Alice", email="alice@example.com")
+```
+
+<ParamField path="init" type="bool" default="True">
+  Include in `__init__()` constructor.
+</ParamField>
+
+<ParamField path="repr" type="bool" default="True">
+  Include in `__repr__()` output.
+</ParamField>
+
+<ParamField path="compare" type="bool" default="True">
+  Include in equality comparison.
+</ParamField>
+
+<ParamField path="kw_only" type="bool" default="False">
+  Make parameter keyword-only in `__init__()`.
+</ParamField>
+
+<ParamField path="default_factory" type="Callable">
+  Factory function for default values.
+
+  ```python
+  from datetime import datetime
+  
+  created_at: Mapped[datetime] = mapped_column(
+      default_factory=datetime.utcnow
+  )
+  ```
+</ParamField>
+
+## Advanced Patterns
+
+### Mixin Classes
+
+Share columns across multiple models:
+
+```python
+from datetime import datetime
+from sqlalchemy import func
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+
+class Post(TimestampMixin, Base):
+    __tablename__ = "posts"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str]
+```
+
+### declared_attr for Dynamic Columns
+
+Compute column definitions at class creation time:
+
+```python
+from sqlalchemy.orm import declared_attr
+
+class HasID:
+    @declared_attr
+    def id(cls) -> Mapped[int]:
+        return mapped_column(primary_key=True)
+
+class User(HasID, Base):
+    __tablename__ = "users"
+    name: Mapped[str]
+
+class Post(HasID, Base):
+    __tablename__ = "posts"
+    title: Mapped[str]
+```
+
+### Type Annotation Map
+
+Customize default type mappings:
+
+```python
+from typing import Annotated
+from sqlalchemy import String, Text
+from decimal import Decimal
+
+# Define custom annotations
+str50 = Annotated[str, "str50"]
+str255 = Annotated[str, "str255"]
+longtext = Annotated[str, "longtext"]
+money = Annotated[Decimal, "money"]
+
+class Base(DeclarativeBase):
+    type_annotation_map = {
+        str50: String(50),
+        str255: String(255),
+        longtext: Text,
+        money: Numeric(10, 2),
+    }
+
+class Product(Base):
+    __tablename__ = "products"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str255]  # VARCHAR(255)
+    sku: Mapped[str50]    # VARCHAR(50)
+    description: Mapped[longtext]  # TEXT
+    price: Mapped[money]  # NUMERIC(10, 2)
+```
+
+## Legacy 1.x Style
+
+<Warning>
+The following style still works but is not recommended for new code.
+</Warning>
+
+```python
+from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), nullable=False)
+    email = Column(String(100), unique=True)
+```
+
+## Best Practices
+
+<Note>
+1. **Always use `Mapped[]`** for type safety and clarity
+2. **Use `Optional[]`** to indicate nullable columns
+3. **Leverage type_annotation_map** for consistent type usage
+4. **Use mixins** for common column patterns
+5. **Prefer `mapped_column()`** over legacy `Column()`
+</Note>
+
+### Common Patterns
+
+```python
+from datetime import datetime
+from sqlalchemy import func, String
+from typing import Optional
+
+class User(Base):
+    __tablename__ = "users"
+    
+    # Primary key with auto-increment
+    id: Mapped[int] = mapped_column(primary_key=True)
+    
+    # Required string with length
+    username: Mapped[str] = mapped_column(String(50), unique=True)
+    
+    # Optional string
+    email: Mapped[Optional[str]] = mapped_column(String(100))
+    
+    # Server-side timestamp
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now()
+    )
+    
+    # Updated on every change
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+    
+    # Boolean with default
+    is_active: Mapped[bool] = mapped_column(default=True)
+```
+
+## See Also
+
+- [ORM Overview](/orm/overview)
+- [Declarative Configuration](/orm/declarative-config)
+- [Relationships](/orm/relationships)

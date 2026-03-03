@@ -1,0 +1,551 @@
+---
+title: 'Tables and Columns'
+description: 'Define database schemas with Table, Column, and MetaData'
+---
+
+# Tables and Columns
+
+SQLAlchemy's schema definition system provides programmatic ways to define database tables, columns, and metadata. All schema constructs are in `sqlalchemy.schema`.
+
+## MetaData
+
+MetaData is a container object that holds table definitions and schema information.
+
+```python
+from sqlalchemy import MetaData
+
+# Create metadata container
+metadata = MetaData()
+
+# With schema name
+metadata = MetaData(schema='myschema')
+```
+
+<ParamField path="MetaData" type="class">
+  **Signature:** `MetaData(schema: Optional[str] = None, naming_convention: Optional[Dict] = None)`
+  
+  Container for database schema elements like tables, columns, and constraints.
+</ParamField>
+
+### MetaData Operations
+
+```python
+# Create all tables
+metadata.create_all(engine)
+
+# Drop all tables
+metadata.drop_all(engine)
+
+# Create specific tables
+metadata.create_all(engine, tables=[users, orders])
+
+# Check if table exists
+metadata.create_all(engine, checkfirst=True)
+
+# Reflect existing database
+metadata.reflect(bind=engine)
+
+# Access reflected tables
+users_table = metadata.tables['users']
+```
+
+## Table Definition
+
+### Basic Table
+
+```python
+from sqlalchemy import Table, Column, Integer, String, MetaData
+
+metadata = MetaData()
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50), nullable=False),
+    Column('email', String(100), unique=True),
+    Column('age', Integer)
+)
+```
+
+<ParamField path="Table" type="class">
+  **Signature:** `Table(name: str, metadata: MetaData, *columns: Column, schema: Optional[str] = None, **kwargs)`
+  
+  Represents a database table with columns and constraints.
+</ParamField>
+
+### Table with Schema
+
+```python
+# Explicit schema
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50)),
+    schema='public'
+)
+
+# Use metadata default schema
+metadata = MetaData(schema='myapp')
+users = Table('users', metadata, Column('id', Integer))  # myapp.users
+```
+
+### Table Options
+
+<Tabs>
+  <Tab title="Common Options">
+    ```python
+    users = Table(
+        'users',
+        metadata,
+        Column('id', Integer, primary_key=True),
+        Column('name', String(50)),
+        
+        # Table options
+        schema='public',
+        comment='User accounts table',
+        info={'version': '1.0'},
+        
+        # Existence checks
+        keep_existing=True,  # Don't override if exists
+        extend_existing=False,  # Add to existing definition
+        autoload_with=engine,  # Reflect from database
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Database-Specific">
+    ```python
+    # MySQL options
+    users = Table(
+        'users',
+        metadata,
+        Column('id', Integer, primary_key=True),
+        mysql_engine='InnoDB',
+        mysql_charset='utf8mb4',
+        mysql_collate='utf8mb4_unicode_ci',
+        mysql_comment='User table'
+    )
+    
+    # PostgreSQL options
+    users = Table(
+        'users',
+        metadata,
+        Column('id', Integer, primary_key=True),
+        postgresql_tablespace='fast_storage',
+        postgresql_partition_by='RANGE (created_at)'
+    )
+    
+    # SQLite options
+    users = Table(
+        'users',
+        metadata,
+        Column('id', Integer, primary_key=True),
+        sqlite_autoincrement=True
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## Column Definition
+
+### Basic Columns
+
+```python
+from sqlalchemy import Column, Integer, String, Boolean, DateTime
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer),
+    Column('username', String(50)),
+    Column('email', String(100)),
+    Column('is_active', Boolean),
+    Column('created_at', DateTime)
+)
+```
+
+<ParamField path="Column" type="class">
+  **Signature:** `Column(name: Optional[str], type_: TypeEngine, *constraints, **kwargs)`
+  
+  Represents a table column with type and constraints.
+</ParamField>
+
+### Column Constraints
+
+```python
+from sqlalchemy import Column, Integer, String, Boolean
+
+users = Table(
+    'users',
+    metadata,
+    
+    # Primary key
+    Column('id', Integer, primary_key=True),
+    
+    # Not null
+    Column('username', String(50), nullable=False),
+    
+    # Unique
+    Column('email', String(100), unique=True),
+    
+    # Default value
+    Column('is_active', Boolean, default=True),
+    
+    # Server default (SQL expression)
+    Column('created_at', DateTime, server_default=func.now()),
+    
+    # Auto-increment
+    Column('id', Integer, autoincrement=True),
+    
+    # Column comment
+    Column('notes', String(500), comment='User notes'),
+)
+```
+
+### Column Options
+
+<CodeGroup>
+```python Nullability
+# Nullable (default for most columns)
+Column('middle_name', String(50), nullable=True)
+
+# Not nullable
+Column('email', String(100), nullable=False)
+
+# Primary keys are automatically NOT NULL
+Column('id', Integer, primary_key=True)  # Implicitly NOT NULL
+```
+
+```python Default Values
+from sqlalchemy import func
+from datetime import datetime
+
+# Python-side default
+Column('status', String(20), default='pending')
+Column('created_at', DateTime, default=datetime.utcnow)
+
+# Server-side default (SQL expression)
+Column('created_at', DateTime, server_default=func.now())
+Column('uuid', String(36), server_default=func.uuid_generate_v4())
+
+# Default with callable
+def generate_code():
+    return f"USER_{random.randint(1000, 9999)}"
+
+Column('code', String(20), default=generate_code)
+```
+
+```python Update Defaults
+# onupdate - Python-side
+Column('updated_at', DateTime, onupdate=datetime.utcnow)
+
+# server_onupdate - Server-side
+Column('updated_at', DateTime, server_onupdate=func.now())
+```
+
+```python Indexes
+# Single column index
+Column('email', String(100), index=True)
+
+# Unique index
+Column('username', String(50), unique=True)
+
+# Named index
+Column('email', String(100), index=True, index_name='ix_users_email')
+```
+</CodeGroup>
+
+### Column Names and Keys
+
+```python
+# Column with different SQL name
+Column('user_name', String(50), key='username')
+# Access as: users.c.username
+# SQL generates: user_name
+
+# Quoted names (preserve case, special chars)
+from sqlalchemy import quoted_name
+
+Column(quoted_name('User Name', quote=True), String(50))
+# Generates: "User Name" (quoted)
+```
+
+## Accessing Columns
+
+```python
+# Access table columns
+users.c.id
+users.c.name
+users.columns.email
+
+# Iterate columns
+for col in users.c:
+    print(col.name, col.type)
+
+# Get column by name
+id_col = users.c['id']
+
+# Check if column exists
+if 'email' in users.c:
+    print(users.c.email)
+
+# All column names
+column_names = users.c.keys()
+```
+
+## Composite Primary Keys
+
+```python
+# Multiple column primary key
+order_items = Table(
+    'order_items',
+    metadata,
+    Column('order_id', Integer, primary_key=True),
+    Column('product_id', Integer, primary_key=True),
+    Column('quantity', Integer),
+    Column('price', Numeric(10, 2))
+)
+
+# Using PrimaryKeyConstraint
+from sqlalchemy import PrimaryKeyConstraint
+
+order_items = Table(
+    'order_items',
+    metadata,
+    Column('order_id', Integer),
+    Column('product_id', Integer),
+    Column('quantity', Integer),
+    PrimaryKeyConstraint('order_id', 'product_id', name='pk_order_items')
+)
+```
+
+## Generated Columns
+
+### Computed Columns
+
+```python
+from sqlalchemy import Computed
+
+# PostgreSQL, MySQL 5.7+, SQLite 3.31+
+products = Table(
+    'products',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('price', Numeric(10, 2)),
+    Column('tax_rate', Numeric(4, 3)),
+    Column(
+        'price_with_tax',
+        Numeric(10, 2),
+        Computed('price * (1 + tax_rate)')
+    )
+)
+
+# Stored vs. virtual
+Column('total', Numeric, Computed('price * quantity', persisted=True))  # Stored
+Column('total', Numeric, Computed('price * quantity', persisted=False))  # Virtual
+```
+
+### Identity Columns
+
+```python
+from sqlalchemy import Identity
+
+# PostgreSQL IDENTITY, SQL Server IDENTITY
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, Identity(start=1, increment=1), primary_key=True),
+    Column('name', String(50))
+)
+
+# Custom options
+Column(
+    'id',
+    Integer,
+    Identity(
+        start=100,
+        increment=1,
+        minvalue=1,
+        maxvalue=999999,
+        cycle=False,
+        cache=20
+    ),
+    primary_key=True
+)
+```
+
+## Table Reflection
+
+### Reflect Existing Tables
+
+```python
+# Reflect single table
+users = Table('users', metadata, autoload_with=engine)
+
+# Access reflected columns
+print(users.c.keys())
+
+# Reflect all tables
+metadata.reflect(bind=engine)
+
+# Access reflected tables
+for table_name in metadata.tables:
+    table = metadata.tables[table_name]
+    print(f"Table: {table_name}")
+    for col in table.c:
+        print(f"  Column: {col.name} ({col.type})")
+
+# Reflect specific schema
+metadata.reflect(bind=engine, schema='myschema')
+
+# Reflect with views
+metadata.reflect(bind=engine, views=True)
+```
+
+### Selective Reflection
+
+```python
+# Reflect only specific tables
+metadata.reflect(bind=engine, only=['users', 'orders'])
+
+# Extend existing table definition
+users = Table(
+    'users',
+    metadata,
+    Column('custom_field', String(100)),  # Add custom column
+    extend_existing=True,
+    autoload_with=engine
+)
+```
+
+## Declarative Table Copies
+
+### Cloning Tables
+
+```python
+# Copy to different metadata
+new_metadata = MetaData()
+users_copy = users.to_metadata(new_metadata)
+
+# Copy with new name
+users_archive = users.to_metadata(metadata, name='users_archive')
+
+# Copy with schema change
+users_test = users.to_metadata(metadata, schema='test')
+```
+
+## Table Info and Metadata
+
+```python
+# Add custom info
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    info={'version': '2.0', 'owner': 'admin'}
+)
+
+# Access info
+print(users.info['version'])
+
+# Column info
+Column('data', String(100), info={'encrypted': True, 'pii': True})
+```
+
+## Common Patterns
+
+### Timestamp Columns
+
+```python
+from sqlalchemy import func
+from datetime import datetime
+
+# Standard timestamp pattern
+Table(
+    'posts',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('title', String(200)),
+    Column('created_at', DateTime, nullable=False, server_default=func.now()),
+    Column('updated_at', DateTime, onupdate=func.now())
+)
+```
+
+### Soft Delete
+
+```python
+Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50)),
+    Column('deleted_at', DateTime, nullable=True),
+    Column('is_deleted', Boolean, default=False, server_default='false')
+)
+```
+
+### Versioning
+
+```python
+Table(
+    'documents',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('content', Text),
+    Column('version', Integer, default=1, nullable=False),
+    Column('updated_at', DateTime, onupdate=func.now())
+)
+```
+
+### Multi-tenant
+
+```python
+Table(
+    'data',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('tenant_id', Integer, nullable=False, index=True),
+    Column('value', String(100))
+)
+```
+
+## Inspecting Schema
+
+```python
+from sqlalchemy import inspect
+
+inspector = inspect(engine)
+
+# Get table names
+table_names = inspector.get_table_names()
+view_names = inspector.get_view_names()
+
+# Get columns
+columns = inspector.get_columns('users')
+for col in columns:
+    print(f"{col['name']}: {col['type']}")
+
+# Get primary keys
+pk = inspector.get_pk_constraint('users')
+print(pk['constrained_columns'])
+
+# Get foreign keys
+fks = inspector.get_foreign_keys('orders')
+
+# Get indexes
+indexes = inspector.get_indexes('users')
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Constraints" href="/core/schema-constraints">
+    Learn about foreign keys and constraints
+  </Card>
+  
+  <Card title="DDL Operations" href="/core/schema-ddl">
+    Create and modify database schemas
+  </Card>
+</CardGroup>

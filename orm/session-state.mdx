@@ -1,0 +1,754 @@
+---
+title: "Session State Management"
+description: "Understanding object states (transient, pending, persistent, detached), state transitions, and operations like expunge and merge"
+---
+
+## Overview
+
+SQLAlchemy tracks the state of every mapped object instance through its lifecycle. Understanding these states is crucial for effective ORM usage.
+
+## Object States
+
+Every mapped object exists in one of four states:
+
+### Transient
+
+A newly created object **not** yet associated with any session.
+
+```python
+# Create a new object - it's transient
+user = User(name="Alice", email="alice@example.com")
+
+# Check state
+from sqlalchemy import inspect
+state = inspect(user)
+print(state.transient)  # True
+print(state.pending)    # False
+print(state.persistent) # False
+print(state.detached)   # False
+```
+
+**Characteristics:**
+- No database identity (no primary key)
+- Not in any session
+- No database representation
+- Will be garbage collected if no references exist
+
+### Pending
+
+An object added to a session but **not yet flushed** to the database.
+
+```python
+user = User(name="Alice")
+
+# Add to session - now pending
+session.add(user)
+
+state = inspect(user)
+print(state.transient)  # False
+print(state.pending)    # True
+print(state.persistent) # False
+print(user in session.new)  # True
+```
+
+**Characteristics:**
+- Added to session via `add()` or cascade
+- Still no database identity
+- Will receive INSERT during next flush
+- Part of `session.new` collection
+
+### Persistent
+
+An object with a database identity **present in the session**.
+
+```python
+user = User(name="Alice")
+session.add(user)
+session.flush()  # Or commit()
+
+# Now persistent
+state = inspect(user)
+print(state.persistent) # True
+print(user.id)          # Has primary key
+print(user in session)  # True
+```
+
+**Characteristics:**
+- Has database identity (primary key)
+- Exists in database
+- In session's identity map
+- Changes tracked and flushed as UPDATE
+- Part of `session.dirty` if modified
+
+### Detached
+
+An object with a database identity **not** in any session.
+
+```python
+user = session.get(User, 1)
+session.close()  # or session.expunge(user)
+
+# Now detached
+state = inspect(user)
+print(state.detached)   # True
+print(state.persistent) # False
+print(user in session)  # False
+```
+
+**Characteristics:**
+- Has database identity
+- Not in any session
+- Changes not tracked
+- Can be re-attached via `add()` or `merge()`
+
+## State Transition Diagram
+
+```
+┌───────────┐
+│ TRANSIENT │  ──add()──>  ┌─────────┐
+└───────────┘              │ PENDING │
+                           └─────────┘
+                                │
+                          flush/commit
+                                │
+                                ▼
+                          ┌────────────┐
+                   ┌──────│ PERSISTENT │◄──────┐
+                   │      └────────────┘       │
+                   │            │              │
+              expunge()    delete()+flush   add()
+             close()           │           merge()
+                   │            ▼              │
+                   │      ┌─────────┐         │
+                   └─────>│ DELETED │         │
+                          └─────────┘         │
+                                │             │
+                             commit           │
+                                │             │
+                                ▼             │
+                          ┌──────────┐        │
+                          │ DETACHED │────────┘
+                          └──────────┘
+```
+
+## State Transitions
+
+### Transient → Pending
+
+**Operation:** `session.add()`
+
+```python
+user = User(name="Alice")  # Transient
+session.add(user)          # Now Pending
+```
+
+Also occurs through:
+- Relationship cascades with `cascade="save-update"`
+- `session.add_all()`
+
+### Pending → Persistent
+
+**Operation:** `session.flush()` or `session.commit()`
+
+```python
+user = User(name="Alice")
+session.add(user)     # Pending
+session.flush()       # INSERT executed, now Persistent
+print(user.id)        # Primary key assigned
+```
+
+<Steps>
+  <Step title="Unit of Work Analysis">
+    Session analyzes pending objects and their dependencies.
+  </Step>
+  
+  <Step title="SQL Generation">
+    INSERT statements generated with proper ordering.
+  </Step>
+  
+  <Step title="Execution">
+    INSERTs executed; auto-generated values returned.
+  </Step>
+  
+  <Step title="Identity Mapping">
+    Object added to identity map with its primary key.
+  </Step>
+</Steps>
+
+### Persistent → Detached
+
+**Operations:**
+- `session.expunge(instance)`
+- `session.close()`
+- Transaction rollback (for previously pending objects)
+- Transaction commit (by default)
+
+```python
+user = session.get(User, 1)  # Persistent
+
+# Method 1: Expunge
+session.expunge(user)        # Detached
+
+# Method 2: Close session
+user2 = session.get(User, 2)
+session.close()              # user2 now Detached
+```
+
+### Detached → Persistent
+
+**Operations:**
+- `session.add()` - Re-attach with same identity
+- `session.merge()` - Merge state into session
+
+```python
+# Detached user from closed session
+detached_user = User(id=1, name="Alice")
+
+# Method 1: Add (if not already in session)
+session.add(detached_user)
+print(inspect(detached_user).persistent)  # True
+
+# Method 2: Merge (safer, handles conflicts)
+merged_user = session.merge(detached_user)
+print(inspect(merged_user).persistent)  # True
+```
+
+### Persistent → Deleted
+
+**Operation:** `session.delete()` + `session.flush()`
+
+```python
+user = session.get(User, 1)  # Persistent
+session.delete(user)         # Marked for deletion
+print(user in session.deleted)  # True
+
+session.flush()              # DELETE executed, now Deleted
+```
+
+<Note>
+The "deleted" state is temporary - objects move to detached after commit or rollback.
+</Note>
+
+### Deleted → Detached
+
+**Operations:**
+- `session.commit()` - Finalizes deletion
+- `session.rollback()` - Cancels deletion, back to Persistent
+
+```python
+user = session.get(User, 1)
+session.delete(user)
+session.flush()
+
+# Commit finalizes
+session.commit()
+print(inspect(user).detached)  # True
+print(inspect(user).was_deleted)  # True
+```
+
+## Inspecting Object State
+
+### Using inspect()
+
+The `inspect()` function provides detailed state information:
+
+```python
+from sqlalchemy import inspect
+
+user = session.get(User, 1)
+state = inspect(user)
+
+# State properties
+print(state.transient)   # False
+print(state.pending)     # False  
+print(state.persistent)  # True
+print(state.detached)    # False
+print(state.deleted)     # False
+print(state.was_deleted) # False
+
+# Identity information
+print(state.identity)     # (1,) - primary key tuple
+print(state.identity_key) # (User, (1,), None)
+print(state.key)          # Same as identity_key
+
+# Session information
+print(state.session)      # <Session object>
+print(state.session_id)   # Internal session ID
+
+# Modification tracking
+print(state.modified)     # True if any changes
+print(state.expired)      # True if attributes expired
+```
+
+### State Properties
+
+<ParamField path="transient" type="bool">
+True if object has no primary key and is not in a session.
+</ParamField>
+
+<ParamField path="pending" type="bool">
+True if object is in session.new (no primary key, in session).
+</ParamField>
+
+<ParamField path="persistent" type="bool">
+True if object has primary key and is in session (not deleted).
+</ParamField>
+
+<ParamField path="detached" type="bool">
+True if object has primary key but is not in any session.
+</ParamField>
+
+<ParamField path="deleted" type="bool">
+True if object is marked for deletion within current transaction.
+</ParamField>
+
+<ParamField path="was_deleted" type="bool">
+True if object was deleted in a flush, even after becoming detached.
+</ParamField>
+
+## Expunge Operations
+
+### expunge()
+
+Remove a single instance from the session.
+
+```python
+user = session.get(User, 1)
+print(user in session)  # True
+
+session.expunge(user)
+print(user in session)  # False
+print(inspect(user).detached)  # True
+
+# Changes no longer tracked
+user.name = "Modified"
+session.commit()  # Change not persisted
+```
+
+**When to use:**
+- Prevent modifications from being saved
+- Free session memory for long-lived objects
+- Transfer objects between sessions (via merge)
+
+### expunge_all()
+
+Remove all instances from the session.
+
+```python
+# Load many objects
+users = session.scalars(select(User)).all()
+
+# Clear entire session
+session.expunge_all()
+
+# All objects now detached
+for user in users:
+    print(inspect(user).detached)  # True
+```
+
+### Cascade Expunge
+
+Expunge cascades to related objects based on relationship configuration:
+
+```python
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    addresses = relationship("Address", cascade="all, expunge")
+
+user = session.get(User, 1)
+addresses = user.addresses  # Load addresses
+
+session.expunge(user)
+# Both user and addresses are expunged
+for addr in addresses:
+    print(inspect(addr).detached)  # True
+```
+
+## Merge Operations
+
+### Basic Merge
+
+Copy state from a detached object into the session:
+
+```python
+# Object from another session or cache
+detached_user = User(id=1, name="Updated Name", email="new@example.com")
+
+# Merge into current session
+with Session(engine) as session:
+    # Merges by primary key
+    merged_user = session.merge(detached_user)
+    
+    # merged_user is in session, detached_user unchanged
+    print(merged_user in session)      # True
+    print(detached_user in session)    # False
+    print(merged_user is not detached_user)  # True
+    
+    session.commit()
+```
+
+### Merge Behavior
+
+<Steps>
+  <Step title="Identify Target">
+    Look for object with same primary key in session's identity map.
+  </Step>
+  
+  <Step title="Load if Necessary">
+    If not in session and `load=True`, query database by primary key.
+  </Step>
+  
+  <Step title="Create if Missing">
+    If not found anywhere, create new instance.
+  </Step>
+  
+  <Step title="Copy Attributes">
+    Copy all attribute values from source to target.
+  </Step>
+  
+  <Step title="Cascade">
+    Recursively merge related objects based on `cascade="merge"`.
+  </Step>
+  
+  <Step title="Return Target">
+    Return the merged (in-session) instance.
+  </Step>
+</Steps>
+
+### Merge Without Load
+
+High-performance merge that skips database loading:
+
+```python
+# Clean, complete object
+user = User(id=1, name="Alice", email="alice@example.com")
+
+# Skip database load
+merged = session.merge(user, load=False)
+
+# No SELECT issued, object added directly
+session.commit()  # UPDATE or INSERT as needed
+```
+
+<Warning>
+With `load=False`, the object must:
+- Have a complete primary key
+- Be in a "clean" state (no pending changes)
+- Have all required attributes populated
+</Warning>
+
+### Merge with Options
+
+```python
+from sqlalchemy.orm import joinedload
+
+detached_user = User(id=1, name="Updated")
+
+# Load existing with eager loading
+merged = session.merge(
+    detached_user,
+    options=[joinedload(User.addresses)]
+)
+
+# addresses are loaded
+print(merged.addresses)
+```
+
+### Merge Conflicts
+
+When the same object is merged multiple times:
+
+```python
+detached1 = User(id=1, name="Version 1")
+detached2 = User(id=1, name="Version 2")
+
+# First merge
+merged1 = session.merge(detached1)
+print(merged1.name)  # "Version 1"
+
+# Second merge updates the same object
+merged2 = session.merge(detached2)
+print(merged1 is merged2)  # True - same object
+print(merged1.name)  # "Version 2" - updated
+```
+
+## Make Transient
+
+Convert persistent/detached objects back to transient state:
+
+```python
+from sqlalchemy.orm import make_transient
+
+user = session.get(User, 1)
+print(inspect(user).persistent)  # True
+print(user.id)  # 1
+
+make_transient(user)
+print(inspect(user).transient)  # True
+print(user.id)  # Still 1 (attribute preserved)
+
+# But no identity
+print(inspect(user).identity)  # None
+print(user in session)  # False
+
+# Can add as new object
+session.add(user)
+session.commit()  # INSERT with new ID
+print(user.id)  # 2 (new ID assigned)
+```
+
+### make_transient() Behavior
+
+- Removes session association
+- Clears identity key
+- Removes from identity map
+- Preserves attribute values
+- Clears expired attributes
+- Resets deleted flag
+
+<Warning>
+`make_transient()` does NOT reload expired attributes. They will resolve to `None` after the operation.
+</Warning>
+
+## Make Transient to Detached
+
+Create a detached object from a transient one:
+
+```python
+from sqlalchemy.orm import make_transient_to_detached
+
+# Create transient object with primary key
+user = User(id=1, name="Alice", email="alice@example.com")
+print(inspect(user).transient)  # True
+
+make_transient_to_detached(user)
+print(inspect(user).detached)  # True
+print(inspect(user).identity)  # (1,)
+
+# Can merge without database access
+with Session(engine) as session:
+    merged = session.merge(user, load=False)
+    session.commit()
+```
+
+### Use Cases
+
+- Deserializing objects from cache/JSON
+- Creating test fixtures
+- Bypassing normal ORM loading
+
+<Note>
+The object must have a valid primary key before calling `make_transient_to_detached()`.
+</Note>
+
+## Attribute State and History
+
+### Checking Modifications
+
+```python
+user = session.get(User, 1)
+original_name = user.name
+
+user.name = "Modified"
+
+state = inspect(user)
+print(state.modified)  # True
+
+# Get history for specific attribute
+hist = state.attrs.name.history
+print(hist.added)      # ["Modified"]
+print(hist.unchanged)  # []
+print(hist.deleted)    # ["Alice"]
+```
+
+### Attribute States
+
+```python
+state = inspect(user)
+
+# Access attribute state objects
+name_state = state.attrs.name
+email_state = state.attrs.email
+
+# Check load status
+print(name_state.loaded_value)  # Current value
+print(email_state.history)      # History object
+```
+
+### Expired Attributes
+
+```python
+user = session.get(User, 1)
+
+# Expire specific attributes
+session.expire(user, ["email"])
+
+state = inspect(user)
+print("email" in state.expired_attributes)  # True
+
+# Access triggers reload
+print(user.email)  # SELECT issued
+print("email" in state.expired_attributes)  # False
+```
+
+## Session Collections
+
+### new (Pending Objects)
+
+```python
+user1 = User(name="Alice")
+user2 = User(name="Bob")
+
+session.add_all([user1, user2])
+
+print(user1 in session.new)  # True
+print(user2 in session.new)  # True
+print(len(session.new))      # 2
+
+session.flush()
+print(len(session.new))      # 0 (now persistent)
+```
+
+### dirty (Modified Objects)
+
+```python
+user = session.get(User, 1)
+print(user in session.dirty)  # False
+
+user.name = "Modified"
+print(user in session.dirty)  # True
+
+# Check all dirty objects
+for obj in session.dirty:
+    print(f"Modified: {obj}")
+
+session.commit()
+print(user in session.dirty)  # False
+```
+
+### deleted (Marked for Deletion)
+
+```python
+user = session.get(User, 1)
+session.delete(user)
+
+print(user in session.deleted)  # True
+print(user in session)          # True (still in session)
+
+session.flush()
+print(user in session.deleted)  # True (until commit)
+
+session.commit()
+print(user in session.deleted)  # False (now detached)
+print(user in session)          # False
+```
+
+## Identity Map
+
+The identity map ensures only one instance per primary key exists in a session:
+
+```python
+# First query
+user1 = session.get(User, 1)
+
+# Second query returns same object
+user2 = session.get(User, 1)
+
+print(user1 is user2)  # True - same Python object
+
+# Even from different queries
+user3 = session.scalars(select(User).where(User.id == 1)).first()
+print(user1 is user3)  # True
+```
+
+### Identity Map Benefits
+
+- **Consistency**: One object per database row per session
+- **Performance**: Subsequent gets are instant lookups
+- **Integrity**: All references see the same state
+
+### Bypassing Identity Map
+
+```python
+from sqlalchemy.orm import with_loader_criteria
+
+# Force reload from database
+user = session.get(User, 1, populate_existing=True)
+
+# Or expire first
+session.expire(user)
+user_name = user.name  # Triggers reload
+```
+
+## Best Practices
+
+### 1. Understand State in Your Context
+
+```python
+def create_user(name: str):
+    # Transient
+    user = User(name=name)
+    
+    with Session(engine) as session:
+        # Pending
+        session.add(user)
+        
+        # Persistent
+        session.commit()
+        
+        # Access while still in session
+        user_id = user.id
+    
+    # Detached - safe to use ID, but not relationships
+    return user_id
+```
+
+### 2. Handle Detached Objects Carefully
+
+```python
+# Bad - will fail if relationships not loaded
+def get_user_addresses_bad(user_id):
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+    # user is detached, addresses may not be loaded
+    return user.addresses  # May raise DetachedInstanceError
+
+# Good - load relationships before detaching
+def get_user_addresses_good(user_id):
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        # Force load while in session
+        addresses = list(user.addresses)
+    return addresses
+```
+
+### 3. Use Merge for Cross-Session Objects
+
+```python
+# Detached object from cache/API/another session
+def update_user(detached_user: User):
+    with Session(engine) as session:
+        # Merge into session
+        merged_user = session.merge(detached_user)
+        session.commit()
+        return merged_user.id
+```
+
+### 4. Monitor Session Size
+
+```python
+# For long-running sessions, periodically expunge
+for i, item in enumerate(large_dataset):
+    process_item(session, item)
+    
+    if i % 1000 == 0:
+        session.flush()
+        session.expunge_all()  # Free memory
+```
+
+## See Also
+
+- [Session Basics](/orm/session-basics) - Session lifecycle and transactions
+- [Session API](/orm/session-api) - Complete Session method reference
+- [Relationships](/orm/relationships) - Managing related objects

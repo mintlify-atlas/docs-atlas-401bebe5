@@ -1,0 +1,463 @@
+---
+title: PostgreSQL Dialect
+description: PostgreSQL dialect features, drivers, and PostgreSQL-specific types
+---
+
+## Overview
+
+The PostgreSQL dialect provides comprehensive support for PostgreSQL databases, including advanced features like arrays, JSON types, range types, full-text search, and more.
+
+<Note>
+**Version Support**
+- Normal support: PostgreSQL 9.6+
+- Best effort: PostgreSQL 9+
+</Note>
+
+## Installation
+
+<Tabs>
+  <Tab title="psycopg (Default)">
+    ```bash
+    pip install psycopg
+    ```
+    Modern driver, supports both sync and async modes.
+  </Tab>
+  <Tab title="psycopg2">
+    ```bash
+    pip install psycopg2-binary
+    # or for production
+    pip install psycopg2
+    ```
+    Mature, stable driver. The traditional choice.
+  </Tab>
+  <Tab title="asyncpg">
+    ```bash
+    pip install asyncpg
+    ```
+    High-performance async-only driver.
+  </Tab>
+  <Tab title="pg8000">
+    ```bash
+    pip install pg8000
+    ```
+    Pure Python driver, no C dependencies.
+  </Tab>
+</Tabs>
+
+## Connecting to PostgreSQL
+
+### Connection Strings
+
+<CodeGroup>
+```python psycopg (sync)
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    "postgresql+psycopg://user:password@localhost:5432/mydb"
+)
+```
+
+```python psycopg (async)
+from sqlalchemy.ext.asyncio import create_async_engine
+
+engine = create_async_engine(
+    "postgresql+psycopg://user:password@localhost:5432/mydb"
+)
+# Or explicitly
+engine = create_async_engine(
+    "postgresql+psycopg_async://user:password@localhost:5432/mydb"
+)
+```
+
+```python psycopg2
+engine = create_engine(
+    "postgresql+psycopg2://user:password@localhost:5432/mydb"
+)
+```
+
+```python asyncpg
+from sqlalchemy.ext.asyncio import create_async_engine
+
+engine = create_async_engine(
+    "postgresql+asyncpg://user:password@localhost:5432/mydb"
+)
+```
+
+```python pg8000
+engine = create_engine(
+    "postgresql+pg8000://user:password@localhost:5432/mydb"
+)
+```
+</CodeGroup>
+
+### Default Driver
+
+If no driver is specified, `psycopg` is used by default:
+
+```python
+engine = create_engine("postgresql://user:password@localhost/mydb")
+```
+
+## PostgreSQL-Specific Features
+
+### ARRAY Types
+
+PostgreSQL supports native array types:
+
+```python
+from sqlalchemy import Table, Column, Integer, String, MetaData
+from sqlalchemy.dialects.postgresql import ARRAY
+
+metadata = MetaData()
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('tags', ARRAY(String)),
+    Column('scores', ARRAY(Integer, dimensions=2))  # 2D array
+)
+
+# Querying with arrays
+from sqlalchemy.dialects.postgresql import array
+
+stmt = users.select().where(
+    users.c.tags.contains(array(['python', 'sql']))
+)
+```
+
+### JSON and JSONB Types
+
+PostgreSQL provides JSON storage with powerful querying capabilities:
+
+<Tabs>
+  <Tab title="JSONB (Recommended)">
+    ```python
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    products = Table(
+        'products',
+        metadata,
+        Column('id', Integer, primary_key=True),
+        Column('data', JSONB)
+    )
+
+    # JSON operators
+    stmt = products.select().where(
+        products.c.data['price'].astext.cast(Integer) > 100
+    )
+    ```
+  </Tab>
+  <Tab title="JSON">
+    ```python
+    from sqlalchemy.dialects.postgresql import JSON
+
+    # JSON type (stored as text, less efficient)
+    events = Table(
+        'events',
+        metadata,
+        Column('id', Integer, primary_key=True),
+        Column('payload', JSON)
+    )
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+Use `JSONB` over `JSON` for better performance. JSONB supports indexing and faster querying.
+</Note>
+
+### Range Types
+
+PostgreSQL supports range types for representing ranges of values:
+
+```python
+from sqlalchemy.dialects.postgresql import (
+    INT4RANGE, INT8RANGE, NUMRANGE, DATERANGE, 
+    TSRANGE, TSTZRANGE
+)
+
+reservations = Table(
+    'reservations',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('room_id', Integer),
+    Column('during', TSTZRANGE)  # Timestamp with timezone range
+)
+
+# Query with ranges
+from sqlalchemy.dialects.postgresql import Range
+from datetime import datetime
+
+my_range = Range(
+    datetime(2024, 1, 1),
+    datetime(2024, 1, 7)
+)
+
+stmt = reservations.select().where(
+    reservations.c.during.overlaps(my_range)
+)
+```
+
+### ENUM Types
+
+Create custom enumerated types:
+
+```python
+from sqlalchemy.dialects.postgresql import ENUM
+
+status_enum = ENUM(
+    'pending', 'active', 'inactive',
+    name='status_type',
+    create_type=True
+)
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('status', status_enum)
+)
+```
+
+### HSTORE
+
+Key-value store within a single column:
+
+```python
+from sqlalchemy.dialects.postgresql import HSTORE
+
+settings = Table(
+    'user_settings',
+    metadata,
+    Column('user_id', Integer, primary_key=True),
+    Column('preferences', HSTORE)
+)
+
+# Query HSTORE
+stmt = settings.select().where(
+    settings.c.preferences['theme'] == 'dark'
+)
+```
+
+### Full-Text Search
+
+PostgreSQL provides powerful full-text search capabilities:
+
+```python
+from sqlalchemy.dialects.postgresql import TSVECTOR, TSQUERY
+from sqlalchemy.dialects.postgresql.ext import (
+    to_tsvector, to_tsquery, plainto_tsquery
+)
+
+articles = Table(
+    'articles',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('title', String),
+    Column('content', String),
+    Column('search_vector', TSVECTOR)
+)
+
+# Full-text search query
+stmt = articles.select().where(
+    articles.c.search_vector.match('python & database')
+)
+
+# Or using to_tsvector
+stmt = articles.select().where(
+    to_tsvector('english', articles.c.content)
+    .match(plainto_tsquery('python database'))
+)
+```
+
+### UUID Type
+
+Native UUID support:
+
+```python
+from sqlalchemy.dialects.postgresql import UUID
+import uuid
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', UUID(as_uuid=True), primary_key=True, default=uuid.uuid4),
+    Column('name', String)
+)
+```
+
+### Other PostgreSQL Types
+
+```python
+from sqlalchemy.dialects.postgresql import (
+    INET,        # IP addresses
+    CIDR,        # Network addresses
+    MACADDR,     # MAC addresses
+    BIT,         # Bit strings
+    BYTEA,       # Binary data
+    MONEY,       # Currency amounts
+    INTERVAL     # Time intervals
+)
+```
+
+## Sequences and IDENTITY
+
+### Using Sequences
+
+```python
+from sqlalchemy import Sequence
+
+users = Table(
+    'users',
+    metadata,
+    Column(
+        'id',
+        Integer,
+        Sequence('user_id_seq', start=1),
+        primary_key=True
+    ),
+    Column('name', String)
+)
+```
+
+### IDENTITY Columns (PostgreSQL 10+)
+
+```python
+from sqlalchemy import Identity
+
+data = Table(
+    'data',
+    metadata,
+    Column(
+        'id',
+        Integer,
+        Identity(start=42, cycle=True),
+        primary_key=True
+    ),
+    Column('value', String)
+)
+```
+
+This generates:
+```sql
+CREATE TABLE data (
+    id INTEGER GENERATED BY DEFAULT AS IDENTITY (START WITH 42 CYCLE),
+    value VARCHAR,
+    PRIMARY KEY (id)
+)
+```
+
+## INSERT with RETURNING
+
+PostgreSQL supports RETURNING clause:
+
+```python
+from sqlalchemy.dialects.postgresql import insert
+
+stmt = insert(users).values(name='Alice').returning(users.c.id)
+result = connection.execute(stmt)
+inserted_id = result.scalar()
+```
+
+## INSERT ... ON CONFLICT (UPSERT)
+
+```python
+from sqlalchemy.dialects.postgresql import insert
+
+stmt = insert(users).values(
+    id=1,
+    name='Alice',
+    email='alice@example.com'
+)
+
+# Update on conflict
+stmt = stmt.on_conflict_do_update(
+    index_elements=['id'],
+    set_=dict(email='alice@example.com')
+)
+
+connection.execute(stmt)
+```
+
+## EXCLUDE Constraints
+
+```python
+from sqlalchemy.dialects.postgresql import ExcludeConstraint
+
+reservations = Table(
+    'reservations',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('room', Integer),
+    Column('during', TSRANGE),
+    ExcludeConstraint(
+        ('room', '='),
+        ('during', '&&'),
+        name='no_overlapping_reservations'
+    )
+)
+```
+
+## Driver-Specific Features
+
+### psycopg Connection Pooling
+
+```python
+import psycopg_pool
+from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
+
+my_pool = psycopg_pool.ConnectionPool(
+    conninfo="postgresql://scott:tiger@localhost/test",
+    close_returns=True
+)
+
+engine = create_engine(
+    url="postgresql+psycopg://",
+    poolclass=NullPool,
+    creator=my_pool.getconn
+)
+```
+
+### asyncpg Prepared Statements
+
+```python
+engine = create_async_engine(
+    "postgresql+asyncpg://user:pass@host/db",
+    connect_args={
+        "prepared_statement_cache_size": 500
+    }
+)
+
+# Disable cache
+engine = create_async_engine(
+    "postgresql+asyncpg://user:pass@host/db?prepared_statement_cache_size=0"
+)
+```
+
+<Warning>
+Asyncpg caches prepared statements and PostgreSQL type OIDs. These can become stale when DDL operations modify types (like ENUM). You may need to reconnect after DDL changes.
+</Warning>
+
+## Performance Tips
+
+1. **Use JSONB over JSON** for better indexing and query performance
+2. **Create indexes on JSONB fields** using GIN indexes:
+   ```sql
+   CREATE INDEX idx_data ON products USING GIN (data);
+   ```
+3. **Use connection pooling** for better connection management
+4. **Set `pool_recycle`** to handle idle connection timeouts
+5. **Use prepared statements** (automatically handled by psycopg and asyncpg)
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Dialect Overview" href="/dialects/overview">
+    Learn about SQLAlchemy's dialect system
+  </Card>
+  <Card title="PostgreSQL Documentation" href="https://www.postgresql.org/docs/" icon="link">
+    Official PostgreSQL documentation
+  </Card>
+</CardGroup>

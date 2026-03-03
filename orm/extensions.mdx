@@ -1,0 +1,544 @@
+---
+title: ORM Extensions
+description: Extend ORM functionality with hybrid properties, association proxies, and mutation tracking
+---
+
+SQLAlchemy's extension modules provide powerful tools for enhancing your ORM models with computed properties, simplified relationship access, and change tracking for mutable types.
+
+## Hybrid Attributes
+
+Hybrid attributes define properties that behave differently at the instance level (Python evaluation) versus the class level (SQL expression generation).
+
+### Hybrid Properties
+
+Use `@hybrid_property` to create computed properties that work both in Python and SQL:
+
+```python
+from sqlalchemy import String, select
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    pass
+
+class Interval(Base):
+    __tablename__ = "interval"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    start: Mapped[int]
+    end: Mapped[int]
+    
+    @hybrid_property
+    def length(self) -> int:
+        return self.end - self.start
+```
+
+**Instance-level usage** (Python evaluation):
+
+```python
+interval = Interval(start=5, end=10)
+print(interval.length)  # 5
+```
+
+**Class-level usage** (SQL expression):
+
+```python
+from sqlalchemy import select
+
+# Generates: SELECT interval.end - interval.start AS length
+stmt = select(Interval.length)
+
+# Filter using the hybrid property
+stmt = select(Interval).filter(Interval.length > 10)
+```
+
+### Hybrid Methods
+
+Create methods that work at both instance and class level:
+
+```python
+from sqlalchemy.ext.hybrid import hybrid_method
+
+class Interval(Base):
+    __tablename__ = "interval"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    start: Mapped[int]
+    end: Mapped[int]
+    
+    @hybrid_method
+    def contains(self, point: int) -> bool:
+        return (self.start <= point) & (point <= self.end)
+    
+    @hybrid_method
+    def intersects(self, other: "Interval") -> bool:
+        return self.contains(other.start) | self.contains(other.end)
+```
+
+**Usage:**
+
+```python
+# Instance level - Python evaluation
+interval = Interval(start=5, end=10)
+print(interval.contains(7))  # True
+print(interval.contains(15))  # False
+
+# Class level - SQL expression
+stmt = select(Interval).filter(Interval.contains(15))
+# Generates: WHERE interval.start <= :start_1 AND interval.end > :end_1
+```
+
+### Custom Expression Behavior
+
+Define different behavior for SQL expressions using `@expression`:
+
+```python
+from sqlalchemy import ColumnElement, Float, func
+from sqlalchemy.ext.hybrid import hybrid_property
+
+class Interval(Base):
+    __tablename__ = "interval"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    start: Mapped[int]
+    end: Mapped[int]
+    
+    @hybrid_property
+    def radius(self) -> float:
+        # Python implementation uses built-in abs()
+        return abs(self.length) / 2
+    
+    @radius.inplace.expression
+    @classmethod
+    def _radius_expression(cls) -> ColumnElement[float]:
+        # SQL implementation uses func.abs()
+        return func.abs(cls.length) / 2
+```
+
+<Note>
+The `@expression` decorator allows you to provide a separate SQL expression when the Python and SQL implementations need to differ.
+</Note>
+
+### Hybrid Setters and Deleters
+
+Make hybrid properties writable:
+
+```python
+class Interval(Base):
+    __tablename__ = "interval"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    start: Mapped[int]
+    end: Mapped[int]
+    
+    @hybrid_property
+    def length(self) -> int:
+        return self.end - self.start
+    
+    @length.inplace.setter
+    def _length_setter(self, value: int) -> None:
+        self.end = self.start + value
+    
+    @length.inplace.expression
+    @classmethod
+    def _length_expression(cls) -> ColumnElement[int]:
+        return cls.end - cls.start
+```
+
+**Usage:**
+
+```python
+interval = Interval(start=5, end=10)
+interval.length = 20  # Sets end to 25
+```
+
+## Association Proxy
+
+Association proxies simplify access to attributes across relationships, eliminating the need to explicitly reference intermediate association objects.
+
+### Basic Usage
+
+Create a simplified view of a relationship:
+
+```python
+from sqlalchemy import ForeignKey, String
+from sqlalchemy.ext.associationproxy import association_proxy, AssociationProxy
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+class Order(Base):
+    __tablename__ = "order"
+    
+    order_id: Mapped[int] = mapped_column(primary_key=True)
+    customer_name: Mapped[str] = mapped_column(String(30))
+    
+    # Direct relationship to association object
+    order_items: Mapped[list["OrderItem"]] = relationship(
+        cascade="all, delete-orphan",
+        back_populates="order"
+    )
+    
+    # Proxy to items through the association
+    items: AssociationProxy[list["Item"]] = association_proxy(
+        "order_items", "item"
+    )
+
+class Item(Base):
+    __tablename__ = "item"
+    
+    item_id: Mapped[int] = mapped_column(primary_key=True)
+    description: Mapped[str] = mapped_column(String(30))
+    price: Mapped[float]
+
+class OrderItem(Base):
+    __tablename__ = "orderitem"
+    
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("order.order_id"), primary_key=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("item.item_id"), primary_key=True
+    )
+    price: Mapped[float]  # Overridden price
+    
+    order: Mapped["Order"] = relationship(back_populates="order_items")
+    item: Mapped["Item"] = relationship()
+```
+
+**Working with the proxy:**
+
+```python
+from sqlalchemy.orm import Session
+
+order = Order(customer_name="john smith")
+
+# Add items directly through the proxy
+# OrderItem objects are created automatically
+order.items.append(mug)
+order.items.append(hat)
+
+# Access items through the proxy
+for item in order.items:
+    print(item.description, item.price)
+
+# Still have access to the association object if needed
+for order_item in order.order_items:
+    print(order_item.item.description, order_item.price)
+```
+
+### Custom Creator Functions
+
+Control how association objects are created with the `creator` parameter:
+
+```python
+class Order(Base):
+    __tablename__ = "order"
+    
+    order_id: Mapped[int] = mapped_column(primary_key=True)
+    order_items: Mapped[list["OrderItem"]] = relationship(
+        cascade="all, delete-orphan"
+    )
+    
+    items: AssociationProxy[list["Item"]] = association_proxy(
+        "order_items",
+        "item",
+        creator=lambda item: OrderItem(item=item, price=item.price * 0.9)
+    )
+```
+
+The creator function is called when new items are added through the proxy:
+
+```python
+order = Order()
+order.items.append(expensive_item)  # Applied with 10% discount
+```
+
+<Note>
+The `creator` parameter is optional. By default, the association object's `__init__()` is called with the proxied value as a positional argument.
+</Note>
+
+### Proxying to Scalar Attributes
+
+Proxy to scalar attributes for simplified attribute access:
+
+```python
+class User(Base):
+    __tablename__ = "user"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    _email_address: Mapped["EmailAddress"] = relationship(
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+    
+    # Proxy to the email string through the relationship
+    email: AssociationProxy[str] = association_proxy(
+        "_email_address", "email",
+        creator=lambda email: EmailAddress(email=email)
+    )
+
+class EmailAddress(Base):
+    __tablename__ = "email_address"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    email: Mapped[str]
+```
+
+**Usage:**
+
+```python
+user = User()
+user.email = "user@example.com"  # Creates EmailAddress automatically
+print(user.email)  # "user@example.com"
+```
+
+### Querying with Association Proxies
+
+Association proxies support SQL operations in queries:
+
+```python
+from sqlalchemy import select
+
+# Query using the proxy attribute
+stmt = select(Order).filter(Order.items.any(Item.description == "SA Mug"))
+
+# The proxy generates the appropriate join
+orders = session.scalars(stmt).all()
+```
+
+## Mutation Tracking
+
+The `mutable` extension enables change tracking for mutable data types like dictionaries and lists stored in database columns.
+
+### MutableDict Example
+
+Track changes to dictionary values:
+
+```python
+from sqlalchemy import String, TypeDecorator
+from sqlalchemy.ext.mutable import MutableDict
+import json
+
+class JSONEncodedDict(TypeDecorator):
+    impl = String
+    cache_ok = True
+    
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            value = json.dumps(value)
+        return value
+    
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            value = json.loads(value)
+        return value
+
+class MyModel(Base):
+    __tablename__ = "my_model"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    data: Mapped[dict[str, str]] = mapped_column(
+        MutableDict.as_mutable(JSONEncodedDict)
+    )
+```
+
+**In-place changes are tracked:**
+
+```python
+from sqlalchemy.orm import Session
+
+obj = MyModel(data={"key": "value"})
+session.add(obj)
+session.commit()
+
+# Modify the dictionary in-place
+obj.data["key"] = "new_value"
+obj.data["another_key"] = "another_value"
+
+# Object is automatically marked dirty
+assert obj in session.dirty
+session.commit()  # Changes are persisted
+```
+
+### Custom Mutable Types
+
+Create custom mutable types by subclassing `Mutable`:
+
+```python
+from sqlalchemy.ext.mutable import Mutable
+
+class MutableDict(Mutable, dict):
+    @classmethod
+    def coerce(cls, key, value):
+        """Convert plain dictionaries to MutableDict."""
+        if not isinstance(value, MutableDict):
+            if isinstance(value, dict):
+                return MutableDict(value)
+            return Mutable.coerce(key, value)
+        return value
+    
+    def __setitem__(self, key, value):
+        """Detect dictionary set events and emit change events."""
+        dict.__setitem__(self, key, value)
+        self.changed()
+    
+    def __delitem__(self, key):
+        """Detect dictionary del events and emit change events."""
+        dict.__delitem__(self, key)
+        self.changed()
+```
+
+<Warning>
+Call `self.changed()` whenever the mutable object is modified in-place to ensure SQLAlchemy tracks the change.
+</Warning>
+
+### MutableList and MutableSet
+
+SQLAlchemy provides built-in mutable types for common collections:
+
+```python
+from sqlalchemy.ext.mutable import MutableList
+from sqlalchemy import JSON
+
+class MyModel(Base):
+    __tablename__ = "my_model"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tags: Mapped[list] = mapped_column(
+        MutableList.as_mutable(JSON)
+    )
+```
+
+**Usage:**
+
+```python
+obj = MyModel(tags=["python", "sqlalchemy"])
+session.add(obj)
+session.commit()
+
+obj.tags.append("orm")  # Tracked automatically
+assert obj in session.dirty
+```
+
+## Combining Extensions
+
+Extensions can be combined for powerful functionality:
+
+```python
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.ext.associationproxy import association_proxy
+
+class Order(Base):
+    __tablename__ = "order"
+    
+    order_id: Mapped[int] = mapped_column(primary_key=True)
+    order_items: Mapped[list["OrderItem"]] = relationship()
+    items: AssociationProxy[list["Item"]] = association_proxy(
+        "order_items", "item"
+    )
+    
+    @hybrid_property
+    def total_price(self) -> float:
+        return sum(item.price for item in self.order_items)
+    
+    @total_price.inplace.expression
+    @classmethod
+    def _total_price_expression(cls) -> ColumnElement[float]:
+        return (
+            select(func.sum(OrderItem.price))
+            .where(OrderItem.order_id == cls.order_id)
+            .correlate_except(OrderItem)
+            .scalar_subquery()
+        )
+```
+
+## Use Cases and Best Practices
+
+<Tabs>
+  <Tab title="Hybrid Attributes">
+    **Use when:**
+    - You need computed properties in queries
+    - Logic differs between Python and SQL
+    - You want to filter or order by derived values
+    
+    **Best practices:**
+    - Keep logic simple and consistent between Python/SQL
+    - Use `@expression` when implementations must differ
+    - Consider performance of SQL expressions in queries
+  </Tab>
+  
+  <Tab title="Association Proxy">
+    **Use when:**
+    - You have many-to-many relationships with attributes
+    - You want to hide association table complexity
+    - You need simplified collection access
+    
+    **Best practices:**
+    - Provide creator functions for complex scenarios
+    - Keep the underlying relationship accessible
+    - Use type hints with `AssociationProxy[...]`
+  </Tab>
+  
+  <Tab title="Mutation Tracking">
+    **Use when:**
+    - Storing JSON, arrays, or custom mutable types
+    - In-place modifications need to trigger updates
+    - Working with PostgreSQL JSON, ARRAY types
+    
+    **Best practices:**
+    - Always call `changed()` after mutations
+    - Implement `coerce()` for type conversions
+    - Consider performance implications of tracking
+  </Tab>
+</Tabs>
+
+## Advanced Patterns
+
+### Chained Association Proxies
+
+Proxy through multiple relationships:
+
+```python
+class User(Base):
+    __tablename__ = "user"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    orders: Mapped[list["Order"]] = relationship()
+    
+    # Proxy through orders to order_items to items
+    items: AssociationProxy[list["Item"]] = association_proxy(
+        "orders", "items"
+    )
+```
+
+### Hybrid Comparators
+
+Customize comparison operations for hybrid attributes:
+
+```python
+from sqlalchemy.ext.hybrid import hybrid_property, Comparator
+
+class CaseInsensitiveComparator(Comparator):
+    def __eq__(self, other):
+        return func.lower(self.__clause_element__()) == func.lower(other)
+
+class User(Base):
+    __tablename__ = "user"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    _username: Mapped[str] = mapped_column("username", String(50))
+    
+    @hybrid_property
+    def username(self) -> str:
+        return self._username
+    
+    @username.inplace.comparator
+    @classmethod
+    def _username_comparator(cls) -> CaseInsensitiveComparator:
+        return CaseInsensitiveComparator(cls._username)
+```
+
+## See Also
+
+- [Mapped Attributes](/orm/queryable-attributes) - Working with mapped columns and properties
+- [Relationships](/orm/relationships) - Defining relationships between models
+- [Events](/orm/events) - Hooking into ORM lifecycle events

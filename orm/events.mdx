@@ -1,0 +1,559 @@
+---
+title: ORM Event System
+description: Hook into mapper, instance, and session lifecycle events to extend ORM behavior
+---
+
+SQLAlchemy's event system provides hooks into critical points in the ORM lifecycle, allowing you to execute custom logic during object creation, loading, persistence, and more.
+
+## Overview
+
+The ORM event system is organized into three main categories:
+
+- **Mapper Events**: Respond to mapper configuration and persistence operations
+- **Instance Events**: Track object lifecycle from creation to deletion
+- **Session Events**: Monitor session-level operations like flush and commit
+
+## Basic Event Registration
+
+Register event listeners using the `@event.listens_for` decorator or `event.listen()` function:
+
+### Decorator Syntax
+
+```python
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
+class User(Base):
+    __tablename__ = "user"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+
+@event.listens_for(User, "before_insert")
+def receive_before_insert(mapper, connection, target):
+    print(f"Inserting user: {target.name}")
+```
+
+### Function Syntax
+
+```python
+def before_insert_listener(mapper, connection, target):
+    print(f"Inserting user: {target.name}")
+
+event.listen(User, "before_insert", before_insert_listener)
+```
+
+<Note>
+The decorator syntax is generally preferred for its clarity and proximity to the model definition.
+</Note>
+
+## Instance Events
+
+Instance events track the lifecycle of individual ORM objects.
+
+### Load Event
+
+Called after an instance is loaded from the database:
+
+```python
+@event.listens_for(User, "load")
+def receive_load(target, context):
+    print(f"User {target.name} loaded from database")
+```
+
+**Use cases:**
+- Initialize transient attributes not stored in the database
+- Set up computed properties
+- Perform post-load validation
+
+<Warning>
+The `load` event fires before eager loading completes. Accessing unloaded relationships may trigger additional queries or interfere with the loading process. Use `restore_load_context=True` if you need to access attributes that weren't part of the initial load.
+</Warning>
+
+### Init Event
+
+Called when an instance is constructed via `__init__()`:
+
+```python
+@event.listens_for(User, "init")
+def receive_init(target, args, kwargs):
+    print(f"Creating new user: {kwargs.get('name')}")
+    # You can modify kwargs before __init__ is called
+    kwargs.setdefault('created_at', datetime.now())
+```
+
+**Key points:**
+- Only fires for userland construction (not database loads)
+- Called *before* `__init__()` executes
+- `kwargs` dictionary can be modified in-place
+
+### Refresh Event
+
+Called after attributes are refreshed from a query:
+
+```python
+@event.listens_for(User, "refresh")
+def receive_refresh(target, context, attrs):
+    if attrs and 'name' in attrs:
+        print(f"User name refreshed: {target.name}")
+```
+
+### Expire Event
+
+Called when attributes are marked as expired:
+
+```python
+@event.listens_for(User, "expire")
+def receive_expire(target, attrs):
+    if attrs is None:
+        print("All attributes expired")
+    else:
+        print(f"Expired attributes: {attrs}")
+```
+
+## Mapper Events
+
+Mapper events respond to persistence operations and mapper configuration.
+
+### Before/After Insert
+
+Execute logic around INSERT operations:
+
+```python
+@event.listens_for(User, "before_insert")
+def receive_before_insert(mapper, connection, target):
+    """Called before INSERT statement is emitted."""
+    target.created_at = datetime.now()
+    target.updated_at = datetime.now()
+
+@event.listens_for(User, "after_insert")
+def receive_after_insert(mapper, connection, target):
+    """Called after INSERT statement completes."""
+    print(f"User {target.id} inserted successfully")
+```
+
+<Warning>
+Mapper-level flush events have significant restrictions:
+- Only modify attributes local to the row being operated on
+- Do not trigger flushes or issue ORM queries
+- Do not access unloaded relationships or collections
+
+For general flush-time operations, prefer `SessionEvents.before_flush` or `SessionEvents.after_flush`.
+</Warning>
+
+### Before/After Update
+
+Handle UPDATE operations:
+
+```python
+@event.listens_for(User, "before_update")
+def receive_before_update(mapper, connection, target):
+    """Called before UPDATE statement is emitted."""
+    target.updated_at = datetime.now()
+
+@event.listens_for(User, "after_update")
+def receive_after_update(mapper, connection, target):
+    """Called after UPDATE statement completes."""
+    # Emit additional SQL if needed
+    connection.execute(
+        text("INSERT INTO audit_log (user_id, action) VALUES (:id, 'updated')"),
+        {"id": target.id}
+    )
+```
+
+**Important notes:**
+- `before_update` is called for all dirty instances, even those with no net changes
+- Check `session.is_modified(instance, include_collections=False)` to detect actual changes
+- UPDATE statement may not be issued if no columns changed
+
+### Before/After Delete
+
+Handle DELETE operations:
+
+```python
+@event.listens_for(User, "before_delete")
+def receive_before_delete(mapper, connection, target):
+    """Called before DELETE statement is emitted."""
+    # Archive the user before deletion
+    connection.execute(
+        text("INSERT INTO deleted_users SELECT * FROM users WHERE id = :id"),
+        {"id": target.id}
+    )
+
+@event.listens_for(User, "after_delete")
+def receive_after_delete(mapper, connection, target):
+    """Called after DELETE statement completes."""
+    print(f"User {target.id} deleted")
+```
+
+### Mapper Configuration Events
+
+Respond to mapper setup and configuration:
+
+```python
+@event.listens_for(User, "instrument_class")
+def receive_instrument_class(mapper, class_):
+    """Called when mapper is first constructed."""
+    print(f"Instrumenting class: {class_.__name__}")
+
+@event.listens_for(User, "after_mapper_constructed")
+def receive_after_mapper_constructed(mapper, class_):
+    """Called after mapper construction completes."""
+    # Access mapper properties
+    print(f"Mapper has {len(list(mapper.iterate_properties))} properties")
+
+@event.listens_for(User, "mapper_configured")
+def receive_mapper_configured(mapper, class_):
+    """Called after mapper is fully configured."""
+    print(f"Mapper configured for {class_.__name__}")
+```
+
+<Accordion title="Understanding mapper configuration timing">
+  The mapper configuration process has several phases:
+  
+  1. **instrument_class**: Earliest phase, minimal state available
+  2. **after_mapper_constructed**: Mapper properties are available
+  3. **mapper_configured**: Full configuration complete (except backrefs)
+  4. **after_configured**: All mappers configured (global event)
+  
+  Choose the appropriate event based on what mapper state you need to access.
+</Accordion>
+
+## Session Events
+
+Session events monitor session-level operations.
+
+### Before/After Flush
+
+The most commonly used session events:
+
+```python
+@event.listens_for(Session, "before_flush")
+def receive_before_flush(session, flush_context, instances):
+    """Called before the flush process begins."""
+    # Safe to modify objects and add new objects
+    for obj in session.new:
+        if isinstance(obj, User):
+            obj.updated_at = datetime.now()
+
+@event.listens_for(Session, "after_flush")
+def receive_after_flush(session, flush_context):
+    """Called after flush completes, before commit."""
+    print(f"Flushed {len(session.identity_map)} objects")
+```
+
+<Note>
+`before_flush` is the recommended event for most flush-time operations because:
+- You can safely modify any object in the session
+- You can add new objects or delete objects
+- The full power of the session is available
+- It fires before any SQL is emitted
+</Note>
+
+### Before/After Commit
+
+Monitor transaction boundaries:
+
+```python
+@event.listens_for(Session, "before_commit")
+def receive_before_commit(session):
+    """Called before transaction commit."""
+    print("About to commit transaction")
+
+@event.listens_for(Session, "after_commit")
+def receive_after_commit(session):
+    """Called after successful commit."""
+    # Safe to emit side effects like sending emails
+    for obj in session.identity_map.values():
+        if isinstance(obj, User) and obj.should_notify:
+            send_notification(obj)
+```
+
+### After Rollback
+
+Handle rollback events:
+
+```python
+@event.listens_for(Session, "after_rollback")
+def receive_after_rollback(session):
+    """Called after a rollback."""
+    print("Transaction rolled back")
+```
+
+### Transient to Pending
+
+Track when new objects are added:
+
+```python
+@event.listens_for(Session, "transient_to_pending")
+def receive_transient_to_pending(session, instance):
+    """Called when a new object is added to the session."""
+    print(f"Added new {instance.__class__.__name__}")
+```
+
+### Pending to Persistent/Deleted to Detached
+
+Track state transitions:
+
+```python
+@event.listens_for(Session, "pending_to_persistent")
+def receive_pending_to_persistent(session, instance):
+    """Called when a new object gets a database identity."""
+    print(f"New {instance.__class__.__name__} persisted with id {instance.id}")
+
+@event.listens_for(Session, "deleted_to_detached")
+def receive_deleted_to_detached(session, instance):
+    """Called after a deleted object is removed from the session."""
+    print(f"{instance.__class__.__name__} deleted and detached")
+```
+
+## Event Modifiers
+
+Customize event behavior with modifier parameters.
+
+### Propagate
+
+Apply events to subclasses:
+
+```python
+class Person(Base):
+    __tablename__ = "person"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str]
+    __mapper_args__ = {"polymorphic_on": "type"}
+
+class Employee(Person):
+    __mapper_args__ = {"polymorphic_identity": "employee"}
+
+@event.listens_for(Person, "before_insert", propagate=True)
+def receive_before_insert(mapper, connection, target):
+    """Called for Person AND all subclasses."""
+    print(f"Inserting {target.__class__.__name__}")
+```
+
+### Raw
+
+Receive `InstanceState` instead of the object:
+
+```python
+@event.listens_for(User, "load", raw=True)
+def receive_load(instance_state, context):
+    """Receive InstanceState object."""
+    obj = instance_state.obj()
+    print(f"Loaded {obj.name}")
+```
+
+### Retval
+
+Control event propagation or operation:
+
+```python
+from sqlalchemy.orm import interfaces
+
+@event.listens_for(User, "before_insert", retval=True)
+def receive_before_insert(mapper, connection, target):
+    """Return value controls event chain."""
+    if not target.is_valid:
+        # Stop event chain
+        return interfaces.EXT_STOP
+    # Continue normally
+    return interfaces.EXT_CONTINUE
+```
+
+### Restore Load Context
+
+Prevent loading context interference:
+
+```python
+@event.listens_for(User, "load", restore_load_context=True)
+def receive_load(target, context):
+    """Safe to access unloaded attributes."""
+    # This won't interfere with ongoing eager loads
+    _ = target.some_deferred_attribute
+```
+
+## Common Patterns
+
+### Automatic Timestamps
+
+```python
+from datetime import datetime
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(default=datetime.now)
+
+@event.listens_for(TimestampMixin, "before_update", propagate=True)
+def receive_before_update(mapper, connection, target):
+    target.updated_at = datetime.now()
+```
+
+### Validation
+
+```python
+from sqlalchemy.orm import validates
+
+class User(Base):
+    __tablename__ = "user"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    
+    @validates('email')
+    def validate_email(self, key, email):
+        if '@' not in email:
+            raise ValueError("Invalid email address")
+        return email
+```
+
+### Audit Logging
+
+```python
+@event.listens_for(Session, "before_flush")
+def before_flush(session, flush_context, instances):
+    """Log all changes to an audit table."""
+    for obj in session.dirty:
+        session.add(AuditLog(
+            table_name=obj.__tablename__,
+            record_id=obj.id,
+            action="update",
+            timestamp=datetime.now()
+        ))
+    
+    for obj in session.new:
+        session.add(AuditLog(
+            table_name=obj.__tablename__,
+            action="insert",
+            timestamp=datetime.now()
+        ))
+    
+    for obj in session.deleted:
+        session.add(AuditLog(
+            table_name=obj.__tablename__,
+            record_id=obj.id,
+            action="delete",
+            timestamp=datetime.now()
+        ))
+```
+
+### Cascading Operations
+
+```python
+@event.listens_for(User, "after_delete")
+def receive_after_delete(mapper, connection, target):
+    """Clean up related data after user deletion."""
+    connection.execute(
+        text("DELETE FROM user_preferences WHERE user_id = :id"),
+        {"id": target.id}
+    )
+    connection.execute(
+        text("DELETE FROM user_sessions WHERE user_id = :id"),
+        {"id": target.id}
+    )
+```
+
+### Soft Deletes
+
+```python
+class SoftDeleteMixin:
+    deleted_at: Mapped[datetime | None] = mapped_column(default=None)
+
+@event.listens_for(Session, "before_flush")
+def soft_delete(session, flush_context, instances):
+    """Convert deletes to updates."""
+    for obj in list(session.deleted):
+        if isinstance(obj, SoftDeleteMixin):
+            session.expunge(obj)
+            obj.deleted_at = datetime.now()
+            session.add(obj)
+```
+
+## Event Timing Comparison
+
+<Steps>
+  <Step title="Choose the right event category">
+    - Use **Instance Events** for object lifecycle tracking
+    - Use **Mapper Events** for persistence-level operations
+    - Use **Session Events** for batch operations and validation
+  </Step>
+  
+  <Step title="Understand event timing">
+    - **before_flush**: Before any SQL, can modify objects freely
+    - **before_insert/update/delete**: During flush, limited operations
+    - **after_flush**: After SQL, before commit
+    - **after_commit**: After transaction, safe for side effects
+  </Step>
+  
+  <Step title="Apply appropriate modifiers">
+    - Use `propagate=True` for inheritance hierarchies
+    - Use `raw=True` when you need `InstanceState`
+    - Use `restore_load_context=True` when accessing unloaded attributes
+  </Step>
+</Steps>
+
+## Best Practices
+
+<Tabs>
+  <Tab title="Performance">
+    - Avoid heavy computation in frequently-fired events (like `load`)
+    - Batch operations in `before_flush` rather than per-object events
+    - Use `after_commit` for expensive side effects like email sending
+    - Consider the impact of event listeners on query performance
+  </Tab>
+  
+  <Tab title="Safety">
+    - Never trigger flushes within mapper-level events
+    - Don't access unloaded relationships in `before_insert/update/delete`
+    - Use `before_flush` for complex multi-object validation
+    - Always handle exceptions appropriately
+  </Tab>
+  
+  <Tab title="Maintainability">
+    - Document why each event listener exists
+    - Keep event handlers focused and single-purpose
+    - Use descriptive function names
+    - Consider using mixins for reusable event patterns
+  </Tab>
+</Tabs>
+
+## When to Use Events vs. Other Approaches
+
+<Accordion title="Events vs. Python Properties">
+  **Use events when:**
+  - Logic should run during persistence operations
+  - You need access to the database connection
+  - The operation is part of the persistence lifecycle
+  
+  **Use properties when:**
+  - Logic is purely computational
+  - No database access is needed
+  - The value should be available immediately when set
+</Accordion>
+
+<Accordion title="Events vs. Hybrid Properties">
+  **Use events when:**
+  - Setting values during persistence (timestamps, defaults)
+  - Performing validation during flush
+  - Triggering side effects
+  
+  **Use hybrid properties when:**
+  - Creating queryable computed attributes
+  - Defining SQL expressions for filtering/ordering
+  - Providing both Python and SQL implementations
+</Accordion>
+
+<Accordion title="Events vs. Database Triggers">
+  **Use events when:**
+  - Logic involves Python objects or external systems
+  - You need portable code across databases
+  - The operation requires ORM state
+  
+  **Use database triggers when:**
+  - Logic is purely database-level
+  - You need to enforce constraints for non-ORM access
+  - Performance is critical and logic is simple
+</Accordion>
+
+## See Also
+
+- [Session Basics](/orm/session-basics) - Understanding session state management
+- [Extensions](/orm/extensions) - Hybrid properties and other ORM extensions
+- [Relationships](/orm/relationships) - Configuring relationships between models

@@ -1,0 +1,837 @@
+---
+title: 'ORM Queries'
+description: 'Master querying with select(), filter(), joins, and advanced patterns'
+---
+
+## Introduction
+
+This tutorial covers querying in SQLAlchemy ORM, from basic selects to complex joins and aggregations:
+
+- Building SELECT statements with `select()`
+- Filtering with `where()` and `filter_by()`
+- Joining tables and relationships
+- Ordering, grouping, and limiting results
+- Aggregations and subqueries
+- Query performance optimization
+
+## Setup: Example Models
+
+```python
+from typing import List, Optional
+from datetime import datetime
+from sqlalchemy import create_engine, String, Text, DateTime, ForeignKey, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+
+class Base(DeclarativeBase):
+    pass
+
+class Author(Base):
+    __tablename__ = "author"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(100))
+    bio: Mapped[Optional[str]] = mapped_column(Text)
+    
+    books: Mapped[List["Book"]] = relationship(back_populates="author")
+    
+    def __repr__(self) -> str:
+        return f"Author(id={self.id!r}, name={self.name!r})"
+
+class Book(Base):
+    __tablename__ = "book"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    isbn: Mapped[str] = mapped_column(String(13))
+    published_date: Mapped[datetime] = mapped_column(DateTime)
+    price: Mapped[float]
+    author_id: Mapped[int] = mapped_column(ForeignKey("author.id"))
+    
+    author: Mapped["Author"] = relationship(back_populates="books")
+    reviews: Mapped[List["Review"]] = relationship(back_populates="book")
+    
+    def __repr__(self) -> str:
+        return f"Book(id={self.id!r}, title={self.title!r})"
+
+class Review(Base):
+    __tablename__ = "review"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("book.id"))
+    reviewer_name: Mapped[str] = mapped_column(String(100))
+    rating: Mapped[int]  # 1-5 stars
+    comment: Mapped[str] = mapped_column(Text)
+    review_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    
+    book: Mapped["Book"] = relationship(back_populates="reviews")
+
+engine = create_engine("sqlite://", echo=True)
+Base.metadata.create_all(engine)
+```
+
+## Basic SELECT Queries
+
+### Select All Entities
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+with Session(engine) as session:
+    # Select all authors
+    stmt = select(Author)
+    for author in session.scalars(stmt):
+        print(author)
+    
+    # Get all results as a list
+    authors = session.scalars(select(Author)).all()
+    print(f"Found {len(authors)} authors")
+```
+
+<Tip>
+Use `session.scalars()` when selecting complete ORM entities. Use `session.execute()` when selecting specific columns or tuples.
+</Tip>
+
+### Select Specific Columns
+
+```python
+with Session(engine) as session:
+    # Select specific columns
+    stmt = select(Author.name, Author.email)
+    
+    for row in session.execute(stmt):
+        print(f"{row.name}: {row.email}")
+    
+    # Access by index
+    for row in session.execute(stmt):
+        print(f"{row[0]}: {row[1]}")
+```
+
+### Select with Column Aliases
+
+```python
+from sqlalchemy import label
+
+with Session(engine) as session:
+    stmt = select(
+        Author.name.label('author_name'),
+        func.count(Book.id).label('book_count')
+    ).join(Book).group_by(Author.id)
+    
+    for row in session.execute(stmt):
+        print(f"{row.author_name} has written {row.book_count} book(s)")
+```
+
+## Filtering Results
+
+### WHERE Clause with where()
+
+```python
+with Session(engine) as session:
+    # Simple equality
+    stmt = select(Author).where(Author.name == "J.K. Rowling")
+    author = session.scalars(stmt).one()
+    
+    # Multiple conditions (AND)
+    stmt = select(Book).where(
+        Book.price > 20,
+        Book.published_date > datetime(2020, 1, 1)
+    )
+    
+    # Using and_() explicitly
+    from sqlalchemy import and_
+    stmt = select(Book).where(
+        and_(
+            Book.price > 20,
+            Book.price < 50
+        )
+    )
+    
+    # OR conditions
+    from sqlalchemy import or_
+    stmt = select(Author).where(
+        or_(
+            Author.name.like('J%'),
+            Author.email.like('%@gmail.com')
+        )
+    )
+```
+
+### filter_by() for Equality
+
+```python
+with Session(engine) as session:
+    # filter_by uses keyword arguments
+    author = session.scalars(
+        select(Author).filter_by(name="George Orwell")
+    ).one()
+    
+    # Multiple conditions
+    books = session.scalars(
+        select(Book).filter_by(author_id=1, price=29.99)
+    ).all()
+```
+
+<Note>
+Use `filter_by()` for simple equality checks. Use `where()` for complex conditions, comparisons, and SQL expressions.
+</Note>
+
+### Common Filter Patterns
+
+<Tabs>
+  <Tab title="String Matching">
+    ```python
+    with Session(engine) as session:
+        # LIKE pattern
+        stmt = select(Book).where(Book.title.like('%Python%'))
+        
+        # Case-insensitive LIKE (ilike)
+        stmt = select(Book).where(Book.title.ilike('%python%'))
+        
+        # Starts with
+        stmt = select(Book).where(Book.title.startswith('The'))
+        
+        # Ends with
+        stmt = select(Book).where(Book.title.endswith('Guide'))
+        
+        # Contains
+        stmt = select(Book).where(Book.title.contains('SQL'))
+    ```
+  </Tab>
+  
+  <Tab title="Numeric Comparisons">
+    ```python
+    with Session(engine) as session:
+        # Greater than
+        stmt = select(Book).where(Book.price > 30)
+        
+        # Less than or equal
+        stmt = select(Book).where(Book.price <= 25)
+        
+        # Between
+        stmt = select(Book).where(Book.price.between(20, 40))
+        
+        # IN clause
+        stmt = select(Book).where(Book.id.in_([1, 2, 3, 4, 5]))
+        
+        # NOT IN
+        stmt = select(Book).where(Book.id.not_in([1, 2, 3]))
+    ```
+  </Tab>
+  
+  <Tab title="NULL Handling">
+    ```python
+    with Session(engine) as session:
+        # IS NULL
+        stmt = select(Author).where(Author.bio.is_(None))
+        
+        # IS NOT NULL
+        stmt = select(Author).where(Author.bio.is_not(None))
+        
+        # Alternative syntax
+        stmt = select(Author).where(Author.bio == None)
+        stmt = select(Author).where(Author.bio != None)
+    ```
+  </Tab>
+  
+  <Tab title="Date/Time">
+    ```python
+    from datetime import datetime, timedelta
+    
+    with Session(engine) as session:
+        # Books published this year
+        current_year = datetime.now().year
+        stmt = select(Book).where(
+            func.extract('year', Book.published_date) == current_year
+        )
+        
+        # Books published in last 30 days
+        cutoff = datetime.now() - timedelta(days=30)
+        stmt = select(Book).where(Book.published_date >= cutoff)
+        
+        # Date range
+        stmt = select(Book).where(
+            Book.published_date.between(
+                datetime(2020, 1, 1),
+                datetime(2023, 12, 31)
+            )
+        )
+    ```
+  </Tab>
+</Tabs>
+
+## Ordering Results
+
+### ORDER BY
+
+```python
+with Session(engine) as session:
+    # Ascending (default)
+    stmt = select(Book).order_by(Book.title)
+    
+    # Descending
+    stmt = select(Book).order_by(Book.price.desc())
+    
+    # Multiple columns
+    stmt = select(Book).order_by(
+        Book.author_id,
+        Book.published_date.desc()
+    )
+    
+    # Nulls first/last
+    stmt = select(Author).order_by(Author.bio.nulls_first())
+    stmt = select(Author).order_by(Author.bio.nulls_last())
+```
+
+### Case-Insensitive Ordering
+
+```python
+with Session(engine) as session:
+    # Order by lowercase version
+    stmt = select(Author).order_by(func.lower(Author.name))
+```
+
+## Limiting and Pagination
+
+### LIMIT and OFFSET
+
+```python
+with Session(engine) as session:
+    # First 10 results
+    stmt = select(Book).order_by(Book.title).limit(10)
+    books = session.scalars(stmt).all()
+    
+    # Skip first 10, get next 10 (pagination)
+    stmt = select(Book).order_by(Book.title).offset(10).limit(10)
+    
+    # Get single result
+    stmt = select(Author).where(Author.id == 1)
+    author = session.scalars(stmt).one()  # Raises if not exactly one
+    
+    # Get first result
+    stmt = select(Book).order_by(Book.price.desc())
+    most_expensive = session.scalars(stmt).first()
+```
+
+<Tip>
+Use `one()` when you expect exactly one result. Use `first()` to get the first result or None. Use `one_or_none()` for one result or None.
+</Tip>
+
+### Pagination Helper
+
+```python
+def paginate(session: Session, stmt, page: int = 1, per_page: int = 20):
+    """Paginate query results."""
+    offset = (page - 1) * per_page
+    
+    # Get total count
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total = session.scalar(count_stmt)
+    
+    # Get page results
+    page_stmt = stmt.offset(offset).limit(per_page)
+    items = session.scalars(page_stmt).all()
+    
+    return {
+        'items': items,
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': (total + per_page - 1) // per_page
+    }
+
+# Usage
+with Session(engine) as session:
+    stmt = select(Book).order_by(Book.title)
+    result = paginate(session, stmt, page=2, per_page=10)
+    
+    print(f"Page {result['page']} of {result['total_pages']}")
+    for book in result['items']:
+        print(book.title)
+```
+
+## Joins
+
+### Inner Join
+
+```python
+with Session(engine) as session:
+    # Join using relationship
+    stmt = select(Book).join(Book.author)
+    
+    # Join with filter
+    stmt = select(Book).join(Book.author).where(
+        Author.name == "Stephen King"
+    )
+    
+    # Select from both entities
+    stmt = select(Book, Author).join(Book.author)
+    
+    for book, author in session.execute(stmt):
+        print(f"{book.title} by {author.name}")
+```
+
+### Explicit Join Conditions
+
+```python
+with Session(engine) as session:
+    # Explicit join condition
+    stmt = select(Book).join(Author, Book.author_id == Author.id)
+    
+    # Join from specific entity
+    stmt = select(Author).join(Book, Author.id == Book.author_id)
+```
+
+### Outer Join
+
+```python
+with Session(engine) as session:
+    # Left outer join - includes authors without books
+    stmt = select(Author).outerjoin(Author.books)
+    
+    # Get authors with book count (including 0)
+    stmt = (
+        select(Author, func.count(Book.id).label('book_count'))
+        .outerjoin(Author.books)
+        .group_by(Author.id)
+    )
+    
+    for author, count in session.execute(stmt):
+        print(f"{author.name}: {count} book(s)")
+```
+
+### Multiple Joins
+
+```python
+with Session(engine) as session:
+    # Join through relationships
+    stmt = (
+        select(Review, Book, Author)
+        .join(Review.book)
+        .join(Book.author)
+    )
+    
+    for review, book, author in session.execute(stmt):
+        print(f"{review.rating}/5 - {book.title} by {author.name}")
+```
+
+### Self-Referential Joins
+
+```python
+# Define a tree structure
+from sqlalchemy import aliased
+
+with Session(engine) as session:
+    # Create aliases for self-join
+    parent_author = aliased(Author)
+    
+    # If we had a mentor relationship:
+    # stmt = select(Author, parent_author).join(
+    #     parent_author, Author.mentor_id == parent_author.id
+    # )
+```
+
+## Aggregations
+
+### COUNT, SUM, AVG, MIN, MAX
+
+```python
+with Session(engine) as session:
+    # Count all books
+    count = session.scalar(select(func.count(Book.id)))
+    print(f"Total books: {count}")
+    
+    # Average price
+    avg_price = session.scalar(select(func.avg(Book.price)))
+    print(f"Average price: ${avg_price:.2f}")
+    
+    # Min and max
+    min_price = session.scalar(select(func.min(Book.price)))
+    max_price = session.scalar(select(func.max(Book.price)))
+    
+    # Sum
+    total_value = session.scalar(select(func.sum(Book.price)))
+```
+
+### GROUP BY
+
+```python
+with Session(engine) as session:
+    # Books per author
+    stmt = (
+        select(
+            Author.name,
+            func.count(Book.id).label('book_count')
+        )
+        .join(Book)
+        .group_by(Author.id, Author.name)
+    )
+    
+    for name, count in session.execute(stmt):
+        print(f"{name}: {count} book(s)")
+```
+
+### HAVING Clause
+
+```python
+with Session(engine) as session:
+    # Authors with more than 5 books
+    stmt = (
+        select(
+            Author.name,
+            func.count(Book.id).label('book_count')
+        )
+        .join(Book)
+        .group_by(Author.id, Author.name)
+        .having(func.count(Book.id) > 5)
+    )
+    
+    for name, count in session.execute(stmt):
+        print(f"{name}: {count} books")
+```
+
+### Complex Aggregations
+
+```python
+with Session(engine) as session:
+    # Average rating per book with review count
+    stmt = (
+        select(
+            Book.title,
+            func.avg(Review.rating).label('avg_rating'),
+            func.count(Review.id).label('review_count'),
+            func.min(Review.rating).label('lowest_rating'),
+            func.max(Review.rating).label('highest_rating')
+        )
+        .join(Book.reviews)
+        .group_by(Book.id, Book.title)
+        .having(func.count(Review.id) >= 5)  # At least 5 reviews
+        .order_by(func.avg(Review.rating).desc())
+    )
+    
+    for row in session.execute(stmt):
+        print(f"{row.title}:")
+        print(f"  Average: {row.avg_rating:.1f}/5")
+        print(f"  Reviews: {row.review_count}")
+        print(f"  Range: {row.lowest_rating}-{row.highest_rating}")
+```
+
+## Subqueries
+
+### Scalar Subqueries
+
+```python
+with Session(engine) as session:
+    # Get authors with their average book price
+    avg_price_subq = (
+        select(func.avg(Book.price))
+        .where(Book.author_id == Author.id)
+        .scalar_subquery()
+    )
+    
+    stmt = select(Author.name, avg_price_subq.label('avg_price'))
+    
+    for name, avg_price in session.execute(stmt):
+        print(f"{name}: ${avg_price:.2f} avg")
+```
+
+### Correlated Subqueries
+
+```python
+with Session(engine) as session:
+    # Authors who have books more expensive than their average
+    avg_author_price = (
+        select(func.avg(Book.price))
+        .where(Book.author_id == Author.id)
+        .scalar_subquery()
+    )
+    
+    stmt = (
+        select(Author)
+        .join(Book)
+        .where(Book.price > avg_author_price)
+        .distinct()
+    )
+    
+    authors = session.scalars(stmt).all()
+```
+
+### EXISTS Subqueries
+
+```python
+from sqlalchemy import exists
+
+with Session(engine) as session:
+    # Authors who have at least one 5-star review
+    has_five_star = (
+        exists()
+        .where(Review.book_id == Book.id)
+        .where(Review.rating == 5)
+        .where(Book.author_id == Author.id)
+    )
+    
+    stmt = select(Author).where(has_five_star)
+    
+    for author in session.scalars(stmt):
+        print(f"{author.name} has a 5-star review!")
+```
+
+### FROM Subquery
+
+```python
+with Session(engine) as session:
+    # Create subquery
+    book_stats = (
+        select(
+            Book.author_id,
+            func.count(Book.id).label('book_count'),
+            func.avg(Book.price).label('avg_price')
+        )
+        .group_by(Book.author_id)
+        .subquery()
+    )
+    
+    # Query from subquery
+    stmt = (
+        select(Author.name, book_stats.c.book_count, book_stats.c.avg_price)
+        .join(book_stats, Author.id == book_stats.c.author_id)
+        .where(book_stats.c.book_count > 3)
+    )
+    
+    for name, count, avg in session.execute(stmt):
+        print(f"{name}: {count} books, ${avg:.2f} avg")
+```
+
+## Common Table Expressions (CTEs)
+
+```python
+with Session(engine) as session:
+    # Define CTE
+    prolific_authors = (
+        select(Author.id, Author.name)
+        .join(Book)
+        .group_by(Author.id, Author.name)
+        .having(func.count(Book.id) >= 10)
+        .cte('prolific_authors')
+    )
+    
+    # Use CTE in main query
+    stmt = (
+        select(
+            prolific_authors.c.name,
+            func.avg(Book.price).label('avg_price')
+        )
+        .join(Book, Book.author_id == prolific_authors.c.id)
+        .group_by(prolific_authors.c.name)
+    )
+    
+    for name, avg_price in session.execute(stmt):
+        print(f"{name}: ${avg_price:.2f}")
+```
+
+## UNION Queries
+
+```python
+from sqlalchemy import union_all
+
+with Session(engine) as session:
+    # Books over $50 OR with 5-star average rating
+    expensive = select(Book.id).where(Book.price > 50)
+    
+    highly_rated = (
+        select(Book.id)
+        .join(Review)
+        .group_by(Book.id)
+        .having(func.avg(Review.rating) >= 4.5)
+    )
+    
+    combined = union_all(expensive, highly_rated)
+    
+    # Get the actual books
+    stmt = select(Book).where(Book.id.in_(combined))
+    books = session.scalars(stmt).all()
+```
+
+## Window Functions
+
+```python
+from sqlalchemy import over
+
+with Session(engine) as session:
+    # Rank books by price within each author
+    stmt = select(
+        Book.title,
+        Author.name,
+        Book.price,
+        func.rank().over(
+            partition_by=Book.author_id,
+            order_by=Book.price.desc()
+        ).label('price_rank')
+    ).join(Book.author)
+    
+    for title, author, price, rank in session.execute(stmt):
+        print(f"#{rank}: {title} by {author} - ${price}")
+```
+
+## Query Performance Tips
+
+<Steps>
+  <Step title="Use SELECT only what you need">
+    ```python
+    # Bad - loads all columns
+    books = session.scalars(select(Book)).all()
+    
+    # Good - only needed columns
+    titles = session.scalars(select(Book.title)).all()
+    ```
+  </Step>
+  
+  <Step title="Use joins instead of multiple queries">
+    ```python
+    # Bad - N+1 query problem
+    for book in session.scalars(select(Book)):
+        print(book.author.name)  # Lazy load!
+    
+    # Good - single query with join
+    stmt = select(Book).join(Book.author)
+    for book in session.scalars(stmt):
+        print(book.author.name)
+    ```
+  </Step>
+  
+  <Step title="Use exists() instead of count()">
+    ```python
+    # Bad - counts all
+    has_books = session.scalar(select(func.count(Book.id))) > 0
+    
+    # Good - stops at first match
+    has_books = session.query(
+        exists().where(Book.id.is_not(None))
+    ).scalar()
+    ```
+  </Step>
+</Steps>
+
+## Complete Example: Book Analytics
+
+```python
+from sqlalchemy import select, func
+from sqlalchemy.orm import Session
+
+def get_top_rated_books(session: Session, min_reviews: int = 5, limit: int = 10):
+    """Get books with highest average rating."""
+    stmt = (
+        select(
+            Book.title,
+            Author.name.label('author'),
+            func.avg(Review.rating).label('avg_rating'),
+            func.count(Review.id).label('review_count')
+        )
+        .join(Book.author)
+        .join(Book.reviews)
+        .group_by(Book.id, Book.title, Author.name)
+        .having(func.count(Review.id) >= min_reviews)
+        .order_by(func.avg(Review.rating).desc())
+        .limit(limit)
+    )
+    
+    return session.execute(stmt).all()
+
+def get_author_statistics(session: Session, author_id: int):
+    """Get comprehensive statistics for an author."""
+    stats_stmt = select(
+        func.count(Book.id).label('total_books'),
+        func.avg(Book.price).label('avg_price'),
+        func.sum(Book.price).label('total_value'),
+        func.min(Book.published_date).label('first_published'),
+        func.max(Book.published_date).label('last_published')
+    ).where(Book.author_id == author_id)
+    
+    stats = session.execute(stats_stmt).one()
+    
+    # Get review statistics
+    review_stmt = (
+        select(
+            func.avg(Review.rating).label('avg_rating'),
+            func.count(Review.id).label('total_reviews')
+        )
+        .join(Book)
+        .where(Book.author_id == author_id)
+    )
+    
+    review_stats = session.execute(review_stmt).one()
+    
+    return {
+        'books': stats.total_books,
+        'avg_price': float(stats.avg_price or 0),
+        'total_value': float(stats.total_value or 0),
+        'first_published': stats.first_published,
+        'last_published': stats.last_published,
+        'avg_rating': float(review_stats.avg_rating or 0),
+        'total_reviews': review_stats.total_reviews
+    }
+
+def search_books(session: Session, query: str, filters: dict = None):
+    """Advanced book search with filters."""
+    stmt = select(Book).join(Book.author)
+    
+    # Text search
+    if query:
+        stmt = stmt.where(
+            or_(
+                Book.title.ilike(f'%{query}%'),
+                Author.name.ilike(f'%{query}%')
+            )
+        )
+    
+    # Apply filters
+    if filters:
+        if 'min_price' in filters:
+            stmt = stmt.where(Book.price >= filters['min_price'])
+        if 'max_price' in filters:
+            stmt = stmt.where(Book.price <= filters['max_price'])
+        if 'author_id' in filters:
+            stmt = stmt.where(Book.author_id == filters['author_id'])
+        if 'year' in filters:
+            stmt = stmt.where(
+                func.extract('year', Book.published_date) == filters['year']
+            )
+    
+    return session.scalars(stmt).all()
+
+# Usage
+with Session(engine) as session:
+    # Top rated books
+    print("Top Rated Books:")
+    for title, author, rating, reviews in get_top_rated_books(session):
+        print(f"{title} by {author}: {rating:.1f}/5 ({reviews} reviews)")
+    
+    # Author statistics
+    stats = get_author_statistics(session, author_id=1)
+    print(f"\nAuthor Stats: {stats}")
+    
+    # Search
+    books = search_books(
+        session,
+        query='python',
+        filters={'min_price': 20, 'max_price': 50}
+    )
+    print(f"\nFound {len(books)} books")
+```
+
+## Next Steps
+
+<Card title="Working with Relationships" icon="link" href="/tutorials/orm-related-objects">
+  Learn about relationship loading strategies and advanced patterns
+</Card>
+
+## Key Takeaways
+
+- Use `select()` to build queries; use `where()` for filtering
+- `session.scalars()` for entities, `session.execute()` for tuples
+- Join using relationship attributes for cleaner code
+- Use aggregations with `func.count()`, `func.avg()`, etc.
+- Group with `group_by()`, filter groups with `having()`
+- Subqueries and CTEs help build complex queries step by step
+- Always consider query performance - avoid N+1 problems

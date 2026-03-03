@@ -1,0 +1,547 @@
+---
+title: MetaData System
+description: Learn how to use SQLAlchemy's MetaData to organize database schema definitions, reflect existing schemas, and manage DDL operations.
+---
+
+# MetaData System
+
+The **MetaData** object is a container that holds schema information about your database. It serves as a catalog of Table objects and provides methods for creating, dropping, and reflecting database schemas.
+
+## Overview
+
+MetaData acts as a registry for Table objects and provides a way to organize and manipulate database schema as a unit:
+
+```python
+from sqlalchemy import MetaData, Table, Column, Integer, String, create_engine
+
+metadata = MetaData()
+
+# Tables are registered with the MetaData
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(50)),
+    Column("email", String(100))
+)
+
+# Create all tables
+engine = create_engine("postgresql://user:pass@localhost/dbname")
+metadata.create_all(engine)
+```
+
+## Creating a MetaData Object
+
+### Basic Creation
+
+```python
+from sqlalchemy import MetaData
+
+# Simple metadata object
+metadata = MetaData()
+```
+
+### With Schema Name
+
+Set a default schema for all tables:
+
+```python
+# All tables will be created in the "myapp" schema
+metadata = MetaData(schema="myapp")
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True)
+)
+# Creates table "myapp.users"
+```
+
+### With Naming Convention
+
+Define automatic naming for constraints:
+
+```python
+from sqlalchemy import MetaData
+
+metadata = MetaData(
+    naming_convention={
+        "ix": "ix_%(column_0_label)s",
+        "uq": "uq_%(table_name)s_%(column_0_name)s",
+        "ck": "ck_%(table_name)s_%(constraint_name)s",
+        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+        "pk": "pk_%(table_name)s"
+    }
+)
+```
+
+<Info>
+Naming conventions are especially useful for database migrations with tools like Alembic, as they ensure consistent constraint names across environments.
+</Info>
+
+## Registering Tables
+
+Tables are automatically registered with MetaData when created:
+
+```python
+metadata = MetaData()
+
+# This table is automatically registered
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(50))
+)
+
+# Access registered tables
+print(metadata.tables.keys())  # dict_keys(['users'])
+print(metadata.tables["users"])  # Table('users', ...)
+```
+
+### Multiple Tables
+
+```python
+from sqlalchemy import ForeignKey
+
+metadata = MetaData()
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("username", String(50), nullable=False),
+    Column("email", String(100))
+)
+
+addresses = Table(
+    "addresses",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id")),
+    Column("email_address", String(100), nullable=False)
+)
+
+orders = Table(
+    "orders",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, ForeignKey("users.id")),
+    Column("order_date", String(50)),
+    Column("amount", Integer)
+)
+
+print(f"Registered tables: {list(metadata.tables.keys())}")
+# Registered tables: ['users', 'addresses', 'orders']
+```
+
+## Creating and Dropping Schema
+
+### Creating All Tables
+
+Create all tables registered with the MetaData:
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("postgresql://user:pass@localhost/dbname")
+
+# Create all tables
+metadata.create_all(engine)
+```
+
+<Note>
+`create_all()` checks if tables exist before creating them. It will not recreate existing tables or modify their structure.
+</Note>
+
+### Creating Specific Tables
+
+```python
+# Create only the users table
+metadata.create_all(engine, tables=[users])
+
+# Create users and addresses tables
+metadata.create_all(engine, tables=[users, addresses])
+```
+
+### Dropping All Tables
+
+```python
+# Drop all tables
+metadata.drop_all(engine)
+
+# Drop specific tables
+metadata.drop_all(engine, tables=[orders])
+```
+
+<Warning>
+`drop_all()` will drop tables even if they contain data. Use with caution in production environments.
+</Warning>
+
+### CheckFirst Parameter
+
+Control existence checking:
+
+```python
+# Default behavior - check if table exists before creating
+metadata.create_all(engine, checkfirst=True)
+
+# Skip existence check - faster but may error if table exists
+metadata.create_all(engine, checkfirst=False)
+```
+
+## Table Reflection
+
+Reflect existing database tables into MetaData:
+
+### Reflect All Tables
+
+```python
+from sqlalchemy import MetaData, create_engine
+
+engine = create_engine("postgresql://user:pass@localhost/dbname")
+metadata = MetaData()
+
+# Reflect all tables from the database
+metadata.reflect(bind=engine)
+
+# Access reflected tables
+users_table = metadata.tables["users"]
+print(users_table.columns.keys())
+```
+
+### Reflect Specific Tables
+
+```python
+# Reflect only specific tables
+metadata.reflect(bind=engine, only=["users", "orders"])
+```
+
+### Reflect from Specific Schema
+
+```python
+# Reflect from a specific schema
+metadata.reflect(bind=engine, schema="public")
+
+# Reflect from multiple schemas
+metadata.reflect(bind=engine, schema="schema1")
+metadata.reflect(bind=engine, schema="schema2", extend_existing=True)
+```
+
+### Reflect with Views
+
+```python
+# Include views in reflection
+metadata.reflect(bind=engine, views=True)
+```
+
+### Individual Table Reflection
+
+Reflect a single table:
+
+```python
+from sqlalchemy import Table
+
+metadata = MetaData()
+
+# Reflect just the users table
+users = Table("users", metadata, autoload_with=engine)
+
+print(f"Columns: {users.columns.keys()}")
+print(f"Primary key: {users.primary_key.columns.keys()}")
+```
+
+## Working with Reflected Tables
+
+### Inspecting Table Structure
+
+```python
+metadata = MetaData()
+metadata.reflect(bind=engine)
+
+users = metadata.tables["users"]
+
+# Columns
+for column in users.columns:
+    print(f"{column.name}: {column.type}")
+
+# Primary key
+for column in users.primary_key:
+    print(f"PK: {column.name}")
+
+# Foreign keys
+for fk in users.foreign_keys:
+    print(f"FK: {fk.parent.name} -> {fk.column}")
+
+# Indexes
+for index in users.indexes:
+    print(f"Index: {index.name} on {[c.name for c in index.columns]}")
+```
+
+### Extending Reflected Tables
+
+```python
+# Reflect base structure
+users = Table("users", metadata, autoload_with=engine)
+
+# Add additional columns or constraints programmatically
+users.append_column(Column("custom_field", String(50)))
+```
+
+## MetaData Methods and Properties
+
+### Key Methods
+
+<ParamField path="create_all" type="method">
+  Create all tables in the database.
+  
+  ```python
+  metadata.create_all(engine, tables=None, checkfirst=True)
+  ```
+</ParamField>
+
+<ParamField path="drop_all" type="method">
+  Drop all tables from the database.
+  
+  ```python
+  metadata.drop_all(engine, tables=None, checkfirst=True)
+  ```
+</ParamField>
+
+<ParamField path="reflect" type="method">
+  Load table definitions from the database.
+  
+  ```python
+  metadata.reflect(
+      bind=engine,
+      schema=None,
+      views=False,
+      only=None,
+      extend_existing=False,
+      resolve_fks=True
+  )
+  ```
+</ParamField>
+
+<ParamField path="clear" type="method">
+  Remove all tables from this MetaData.
+  
+  ```python
+  metadata.clear()
+  ```
+</ParamField>
+
+<ParamField path="remove" type="method">
+  Remove a specific table.
+  
+  ```python
+  metadata.remove(users_table)
+  ```
+</ParamField>
+
+### Key Properties
+
+<ParamField path="tables" type="dict">
+  Dictionary of all registered tables, keyed by table name (or schema.table).
+  
+  ```python
+  for table_name, table in metadata.tables.items():
+      print(f"Table: {table_name}")
+  ```
+</ParamField>
+
+<ParamField path="sorted_tables" type="list">
+  Tables sorted by foreign key dependency (for creation order).
+  
+  ```python
+  for table in metadata.sorted_tables:
+      print(f"Create: {table.name}")
+  ```
+</ParamField>
+
+## Schema Management Patterns
+
+### Multiple Schemas
+
+Work with multiple database schemas:
+
+```python
+metadata = MetaData()
+
+# Tables in different schemas
+public_users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    schema="public"
+)
+
+admin_users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    schema="admin"
+)
+
+# Access with schema prefix
+print(metadata.tables["public.users"])
+print(metadata.tables["admin.users"])
+```
+
+### Multi-Tenant Applications
+
+Use schema translation for multi-tenant setups:
+
+```python
+metadata = MetaData()
+
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    schema="tenant"  # Placeholder schema
+)
+
+# Translate schema at runtime
+with engine.connect() as conn:
+    conn = conn.execution_options(
+        schema_translate_map={"tenant": "tenant_123"}
+    )
+    result = conn.execute(users.select())
+    # Queries tenant_123.users
+```
+
+### Copying MetaData
+
+Create a copy of MetaData to a different schema:
+
+```python
+from sqlalchemy import MetaData, Table, Column, Integer, String
+
+# Original metadata
+metadata1 = MetaData()
+users = Table(
+    "users",
+    metadata1,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(50))
+)
+
+# Copy to new metadata with different schema
+metadata2 = MetaData(schema="new_schema")
+users_copy = users.to_metadata(metadata2)
+
+metadata2.create_all(engine)
+```
+
+## Inspector for Advanced Reflection
+
+Use Inspector for more detailed schema information:
+
+```python
+from sqlalchemy import inspect
+
+inspector = inspect(engine)
+
+# Get schema names
+schemas = inspector.get_schema_names()
+print(f"Schemas: {schemas}")
+
+# Get table names
+tables = inspector.get_table_names(schema="public")
+print(f"Tables: {tables}")
+
+# Get view names
+views = inspector.get_view_names(schema="public")
+print(f"Views: {views}")
+
+# Get columns for a table
+columns = inspector.get_columns("users", schema="public")
+for col in columns:
+    print(f"{col['name']}: {col['type']}")
+
+# Get foreign keys
+fks = inspector.get_foreign_keys("orders", schema="public")
+for fk in fks:
+    print(f"FK: {fk['constrained_columns']} -> {fk['referred_table']}.{fk['referred_columns']}")
+
+# Get indexes
+indexes = inspector.get_indexes("users", schema="public")
+for idx in indexes:
+    print(f"Index: {idx['name']} on {idx['column_names']}")
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="One MetaData per Application">
+    Create a single MetaData instance and import it throughout your application:
+    
+    ```python
+    # models.py
+    from sqlalchemy import MetaData
+    
+    metadata = MetaData(
+        naming_convention={
+            "ix": "ix_%(column_0_label)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+            "pk": "pk_%(table_name)s"
+        }
+    )
+    ```
+  </Step>
+  
+  <Step title="Use Naming Conventions">
+    Always set naming conventions for consistent constraint names:
+    
+    ```python
+    metadata = MetaData(
+        naming_convention={
+            "ix": "ix_%(column_0_label)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+            "pk": "pk_%(table_name)s"
+        }
+    )
+    ```
+  </Step>
+  
+  <Step title="Use sorted_tables for DDL">
+    When creating tables manually, use `sorted_tables` to respect foreign key dependencies:
+    
+    ```python
+    for table in metadata.sorted_tables:
+        table.create(engine)
+    ```
+  </Step>
+  
+  <Step title="Reflect in Development, Define in Production">
+    Use reflection during development to explore schemas, but define tables explicitly in production code for clarity and type safety.
+  </Step>
+  
+  <Step title="Organize by Module">
+    Split table definitions across modules but use a single MetaData:
+    
+    ```python
+    # database.py
+    metadata = MetaData()
+    
+    # users.py
+    from .database import metadata
+    users = Table("users", metadata, ...)
+    
+    # orders.py
+    from .database import metadata
+    orders = Table("orders", metadata, ...)
+    ```
+  </Step>
+</Steps>
+
+## See Also
+
+- [Engine Architecture](/concepts/engine) - Creating database engines
+- [Schema Definition](/concepts/schema) - Defining tables, columns, and constraints
+- [Connection Management](/concepts/connections) - Executing DDL operations

@@ -1,0 +1,360 @@
+---
+title: Types API
+description: SQLAlchemy data types API reference
+---
+
+Complete reference for SQLAlchemy's type system.
+
+## Generic Types
+
+These types work across all databases.
+
+### Integer Types
+
+**Integer** - Standard integer
+
+```python
+Column("age", Integer)
+```
+
+**BigInteger** - Large integer (BIGINT)
+
+```python
+Column("views", BigInteger)
+```
+
+**SmallInteger** - Small integer (SMALLINT)
+
+```python
+Column("status", SmallInteger)
+```
+
+### String Types
+
+**String(length)** - Variable-length string (VARCHAR)
+
+```python
+Column("name", String(50))
+Column("email", String(100))
+```
+
+**Text** - Unlimited length text
+
+```python
+Column("description", Text)
+```
+
+**Unicode(length)** - Unicode string
+
+```python
+Column("name", Unicode(50))
+```
+
+**UnicodeText** - Unlimited Unicode text
+
+```python
+Column("content", UnicodeText)
+```
+
+### Numeric Types
+
+**Numeric(precision, scale)** - Exact numeric (DECIMAL/NUMERIC)
+
+```python
+Column("price", Numeric(10, 2))  # 10 digits, 2 decimal places
+```
+
+**Float(precision)** - Floating point
+
+```python
+Column("temperature", Float)
+```
+
+### Boolean
+
+**Boolean** - True/False values
+
+```python
+Column("active", Boolean, default=True)
+```
+
+### Date/Time Types
+
+**Date** - Date without time
+
+```python
+Column("birth_date", Date)
+```
+
+**DateTime** - Date and time
+
+```python
+from sqlalchemy import DateTime, func
+
+Column("created_at", DateTime, default=func.now())
+```
+
+**Time** - Time without date
+
+```python
+Column("start_time", Time)
+```
+
+**Interval** - Time interval
+
+```python
+Column("duration", Interval)
+```
+
+### Binary Types
+
+**LargeBinary** - Binary data (BLOB)
+
+```python
+Column("thumbnail", LargeBinary)
+```
+
+### JSON Types
+
+**JSON** - JSON data
+
+```python
+Column("metadata", JSON)
+
+# Access JSON fields
+stmt = select(users).where(users.c.metadata["role"] == "admin")
+```
+
+### Other Types
+
+**Enum** - Enumerated type
+
+```python
+import enum
+from sqlalchemy import Enum
+
+class Status(enum.Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+
+Column("status", Enum(Status))
+```
+
+**UUID** - UUID type
+
+```python
+import uuid
+from sqlalchemy import Uuid
+
+Column("id", Uuid, primary_key=True, default=uuid.uuid4)
+```
+
+**ARRAY** - Array type (PostgreSQL)
+
+```python
+from sqlalchemy.dialects.postgresql import ARRAY
+
+Column("tags", ARRAY(String))
+```
+
+## Type Parameters
+
+Common parameters for types:
+
+<ParamField path="length" type="int">
+  Length for string types
+</ParamField>
+
+<ParamField path="precision" type="int">
+  Total number of digits for numeric types
+</ParamField>
+
+<ParamField path="scale" type="int">
+  Decimal places for numeric types
+</ParamField>
+
+<ParamField path="timezone" type="bool" default="False">
+  Include timezone for DateTime
+</ParamField>
+
+<ParamField path="as_uuid" type="bool" default="True">
+  Return Python uuid.UUID objects for UUID type
+</ParamField>
+
+## Dialect-Specific Types
+
+### PostgreSQL
+
+```python
+from sqlalchemy.dialects.postgresql import (
+    ARRAY, HSTORE, JSON, JSONB, UUID, INET, CIDR, MACADDR
+)
+
+Column("tags", ARRAY(String(50)))
+Column("config", JSONB)
+Column("id", UUID(as_uuid=True))
+Column("ip_address", INET)
+```
+
+### MySQL
+
+```python
+from sqlalchemy.dialects.mysql import (
+    TINYINT, MEDIUMINT, BIGINT, DOUBLE, ENUM, SET, LONGTEXT
+)
+
+Column("status", TINYINT)
+Column("roles", SET("user", "admin", "moderator"))
+```
+
+### SQLite
+
+```python
+from sqlalchemy.dialects.sqlite import JSON
+
+Column("data", JSON)
+```
+
+### Oracle
+
+```python
+from sqlalchemy.dialects.oracle import VARCHAR2, CLOB, BLOB
+
+Column("name", VARCHAR2(50))
+Column("content", CLOB)
+```
+
+### SQL Server
+
+```python
+from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER, DATETIME2, NVARCHAR
+
+Column("id", UNIQUEIDENTIFIER)
+Column("created_at", DATETIME2)
+Column("name", NVARCHAR(50))
+```
+
+## Custom Types
+
+### TypeDecorator
+
+Create custom type that wraps existing type.
+
+```python
+from sqlalchemy import TypeDecorator, String
+import json
+
+class JSONEncodedDict(TypeDecorator):
+    impl = String
+    
+    cache_ok = True
+    
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return json.dumps(value)
+        return value
+    
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            return json.loads(value)
+        return value
+
+# Usage
+Column("settings", JSONEncodedDict(255))
+```
+
+### UserDefinedType
+
+Create completely custom type.
+
+```python
+from sqlalchemy import types
+
+class Point(types.UserDefinedType):
+    cache_ok = True
+    
+    def get_col_spec(self):
+        return "POINT"
+    
+    def bind_processor(self, dialect):
+        def process(value):
+            if value is not None:
+                return f"POINT({value.x} {value.y})"
+            return value
+        return process
+    
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if value is not None:
+                # Parse point from database format
+                return value
+            return value
+        return process
+
+# Usage
+Column("location", Point)
+```
+
+## Type Coercion
+
+### cast()
+
+Cast expression to different type.
+
+```python
+from sqlalchemy import cast, String, Integer, Date
+
+# Cast to string
+stmt = select(cast(users.c.age, String))
+
+# Cast to integer
+stmt = select(cast(users.c.score, Integer))
+
+# Cast to date
+stmt = select(cast(users.c.created_at, Date))
+```
+
+### type_coerce()
+
+Type coercion without SQL CAST.
+
+```python
+from sqlalchemy import type_coerce, JSON
+
+# Access JSON field
+stmt = select(users).where(
+    type_coerce(users.c.metadata, JSON)["status"] == "active"
+)
+```
+
+## Type Compilation
+
+### TypeEngine Methods
+
+All type classes inherit from TypeEngine:
+
+**get_dbapi_type(dbapi)** - Get DBAPI type object
+
+**python_type** - Corresponding Python type
+
+**comparator_factory** - Comparator class for operators
+
+**bind_processor(dialect)** - Convert Python to database
+
+**result_processor(dialect, coltype)** - Convert database to Python
+
+**compile(dialect)** - Compile to SQL type string
+
+## Best Practices
+
+<Tip>
+Use generic types (String, Integer, etc.) for portability across databases. Only use dialect-specific types when you need database-specific features.
+</Tip>
+
+<Note>
+For JSON data, prefer the generic `JSON` type which works across PostgreSQL, MySQL, SQLite. It automatically uses JSONB on PostgreSQL for better performance.
+</Note>
+
+<Warning>
+When using custom types with `TypeDecorator`, always set `cache_ok = True` if the type is safe to cache, or `cache_ok = False` if it has dynamic behavior.
+</Warning>

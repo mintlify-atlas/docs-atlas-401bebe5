@@ -1,0 +1,464 @@
+---
+title: "Session Basics"
+description: "Learn about the Session lifecycle, creating sessions, and managing transactions with commit and rollback"
+---
+
+## Overview
+
+The `Session` is the primary interface for persistence operations in SQLAlchemy's ORM. It establishes and maintains all conversations between your application and the database, managing the lifecycle of mapped objects and coordinating the unit of work pattern.
+
+<Note>
+The Session is **not thread-safe**. Each thread should maintain its own Session instance, typically created using the `sessionmaker` factory.
+</Note>
+
+## Creating Sessions
+
+### Using sessionmaker
+
+The recommended way to create sessions is through the `sessionmaker` factory:
+
+```python
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+engine = create_engine("postgresql://user:pass@localhost/db")
+SessionLocal = sessionmaker(bind=engine)
+
+# Create a new session instance
+session = SessionLocal()
+```
+
+### Direct Session Construction
+
+You can also instantiate Session directly:
+
+```python
+from sqlalchemy.orm import Session
+
+session = Session(bind=engine)
+```
+
+### Session Configuration Parameters
+
+<ParamField path="autoflush" type="bool" default="True">
+When `True`, the Session will automatically flush before executing queries. This ensures query results reflect pending changes.
+</ParamField>
+
+<ParamField path="autobegin" type="bool" default="True">
+Automatically begin transactions when database access is requested. Set to `False` to require explicit `session.begin()` calls.
+</ParamField>
+
+<ParamField path="expire_on_commit" type="bool" default="True">
+When `True`, all instances are fully expired after `commit()`, forcing a reload on next access to ensure fresh data from the database.
+</ParamField>
+
+<ParamField path="bind" type="Engine | Connection">
+The engine or connection to which this Session should be bound for all SQL operations.
+</ParamField>
+
+<ParamField path="binds" type="Dict">
+A dictionary mapping entities or tables to specific engines, enabling multi-database sessions.
+</ParamField>
+
+<ParamField path="join_transaction_mode" type="str" default="conditional_savepoint">
+Controls behavior when binding to a Connection already in a transaction. Options: `"conditional_savepoint"`, `"create_savepoint"`, `"control_fully"`, `"rollback_only"`.
+</ParamField>
+
+## Session Lifecycle
+
+### Context Manager Pattern (Recommended)
+
+The Session can be used as a context manager, ensuring proper cleanup:
+
+```python
+with SessionLocal() as session:
+    # Work with session
+    user = session.get(User, 1)
+    user.name = "Updated Name"
+    session.commit()
+# Session automatically closed here
+```
+
+### Combined Context Manager with Transaction
+
+For automatic transaction handling:
+
+```python
+with SessionLocal.begin() as session:
+    # Transaction started automatically
+    user = session.get(User, 1)
+    user.name = "Updated Name"
+    # Automatic commit on successful exit
+    # Automatic rollback on exception
+```
+
+### Manual Session Management
+
+```python
+session = SessionLocal()
+try:
+    # Perform operations
+    user = User(name="Alice")
+    session.add(user)
+    session.commit()
+except Exception:
+    session.rollback()
+    raise
+finally:
+    session.close()
+```
+
+## Transaction Management
+
+### Autobegin Behavior
+
+By default, Sessions use **autobegin** - transactions start automatically on first database access:
+
+```python
+session = SessionLocal()
+# No transaction yet
+
+user = session.get(User, 1)  # Transaction begins here
+print(session.in_transaction())  # True
+```
+
+### Explicit Transaction Control
+
+<Steps>
+  <Step title="Begin Transaction">
+    Start a transaction explicitly:
+    
+    ```python
+    session = SessionLocal(autobegin=False)
+    session.begin()
+    # Now in transaction
+    ```
+  </Step>
+  
+  <Step title="Perform Operations">
+    Make changes to your objects:
+    
+    ```python
+    user = User(name="Bob")
+    session.add(user)
+    
+    existing_user = session.get(User, 1)
+    existing_user.email = "new@example.com"
+    ```
+  </Step>
+  
+  <Step title="Commit or Rollback">
+    Finalize or discard changes:
+    
+    ```python
+    try:
+        session.commit()  # Persist changes
+    except Exception:
+        session.rollback()  # Discard changes
+        raise
+    ```
+  </Step>
+</Steps>
+
+## Commit Operations
+
+The `commit()` method flushes pending changes and commits the transaction:
+
+```python
+session = SessionLocal()
+
+user = User(name="Charlie")
+session.add(user)
+
+# Flush and commit
+session.commit()
+
+# user.id is now available (auto-generated primary key)
+print(user.id)
+```
+
+### What Happens During Commit
+
+<Steps>
+  <Step title="Flush Phase">
+    Pending changes are synchronized to the database:
+    - New objects → INSERT statements
+    - Modified objects → UPDATE statements
+    - Deleted objects → DELETE statements
+  </Step>
+  
+  <Step title="Transaction Commit">
+    The database transaction is committed, making changes permanent.
+  </Step>
+  
+  <Step title="Expiration (if expire_on_commit=True)">
+    All objects are expired, clearing their state. Next access will reload from database.
+  </Step>
+</Steps>
+
+<Warning>
+After commit with `expire_on_commit=True`, accessing expired attributes on detached objects will raise an error. Either keep the session open or set `expire_on_commit=False`.
+</Warning>
+
+## Rollback Operations
+
+The `rollback()` method discards all pending changes:
+
+```python
+session = SessionLocal()
+
+user = session.get(User, 1)
+original_name = user.name
+
+user.name = "Modified"
+print(user.name)  # "Modified"
+
+session.rollback()
+
+print(user.name)  # Back to original_name
+```
+
+### Effects of Rollback
+
+- Database transaction is rolled back
+- Pending objects are removed from the session
+- Modified objects revert to their database state
+- Deleted objects are restored to the session
+- All object states are refreshed
+
+## Nested Transactions (SAVEPOINT)
+
+Use `begin_nested()` to create savepoints:
+
+```python
+session = SessionLocal()
+
+user = User(name="Main Transaction")
+session.add(user)
+
+# Create a savepoint
+savepoint = session.begin_nested()
+
+try:
+    # These changes can be rolled back independently
+    temp_user = User(name="Nested")
+    session.add(temp_user)
+    
+    # Something goes wrong
+    raise ValueError("Error!")
+except ValueError:
+    savepoint.rollback()  # Rollback to savepoint
+    # user is still pending, temp_user is discarded
+
+session.commit()  # Only commits user
+```
+
+<Note>
+SAVEPOINT support varies by database. PostgreSQL, MySQL (InnoDB), and Oracle support it well. SQLite requires special configuration.
+</Note>
+
+## Checking Transaction State
+
+```python
+# Check if in any transaction
+if session.in_transaction():
+    print("Transaction active")
+
+# Check if in nested transaction (SAVEPOINT)
+if session.in_nested_transaction():
+    print("In SAVEPOINT")
+
+# Get current transaction object
+trans = session.get_transaction()
+if trans:
+    print(f"Transaction origin: {trans.origin}")
+```
+
+## Best Practices
+
+### 1. Use Context Managers
+
+Always prefer context managers for automatic resource cleanup:
+
+```python
+# Good
+with SessionLocal() as session:
+    session.add(user)
+    session.commit()
+
+# Less ideal - must remember to close
+session = SessionLocal()
+try:
+    session.add(user)
+    session.commit()
+finally:
+    session.close()
+```
+
+### 2. Commit Early, Commit Often
+
+Keep transactions short to minimize lock contention:
+
+```python
+# Process items in separate transactions
+for item in large_dataset:
+    with SessionLocal.begin() as session:
+        process_item(session, item)
+        # Auto-commits here
+```
+
+### 3. Handle Exceptions Properly
+
+Always rollback on errors:
+
+```python
+with SessionLocal() as session:
+    try:
+        # Operations
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        # Handle specific error
+    except Exception:
+        session.rollback()
+        raise
+```
+
+### 4. Session Per Request Pattern (Web Apps)
+
+Create one session per web request:
+
+```python
+# FastAPI example
+from fastapi import Depends
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.post("/users/")
+def create_user(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = User(**user.dict())
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+```
+
+## Flushing
+
+The `flush()` method synchronizes changes to the database without committing:
+
+```python
+session = SessionLocal()
+
+user = User(name="David")
+session.add(user)
+
+# Flush to get auto-generated ID
+session.flush()
+print(user.id)  # ID is now available
+
+# But can still rollback
+session.rollback()
+print(session.get(User, user.id))  # None - wasn't committed
+```
+
+<Warning>
+Changes from `flush()` are visible within the current transaction but not to other database sessions until `commit()` is called.
+</Warning>
+
+## Closing Sessions
+
+The `close()` method releases resources and resets the session:
+
+```python
+session = SessionLocal()
+
+user = session.get(User, 1)
+session.close()
+
+# Session can be reused (if close_resets_only=True, default)
+session.begin()
+user2 = session.get(User, 2)
+session.commit()
+```
+
+### What Close Does
+
+- Rolls back any active transaction
+- Releases database connections back to the pool
+- Clears the identity map (all objects become detached)
+- Resets session state (if `close_resets_only=True`)
+
+## Two-Phase Commit
+
+For distributed transactions across multiple databases:
+
+```python
+SessionLocal = sessionmaker(bind=engine, twophase=True)
+
+with SessionLocal() as session:
+    # Make changes to multiple bound databases
+    session.add(user_db1)
+    session.add(order_db2)
+    
+    # Prepare phase
+    session.prepare()
+    
+    # Commit phase
+    session.commit()
+```
+
+<Note>
+Two-phase commit requires database support (PostgreSQL, MySQL, Oracle) and careful error handling.
+</Note>
+
+## Common Patterns
+
+### Scoped Session (Thread-Local)
+
+For thread-safe global session access:
+
+```python
+from sqlalchemy.orm import scoped_session, sessionmaker
+
+SessionLocal = scoped_session(sessionmaker(bind=engine))
+
+# Returns same session instance per thread
+session1 = SessionLocal()
+session2 = SessionLocal()
+assert session1 is session2  # True in same thread
+
+# Clean up
+SessionLocal.remove()
+```
+
+### Session with Multiple Databases
+
+```python
+engine1 = create_engine("postgresql://...")
+engine2 = create_engine("mysql://...")
+
+SessionLocal = sessionmaker(
+    binds={
+        User: engine1,
+        Order: engine2,
+    }
+)
+
+with SessionLocal() as session:
+    user = User(name="Alice")  # Uses engine1
+    order = Order(user_id=1)   # Uses engine2
+    session.add_all([user, order])
+    session.commit()
+```
+
+## See Also
+
+- [Session API](/orm/session-api) - Complete reference of Session methods
+- [Session State Management](/orm/session-state) - Understanding object states
+- [Query Guide](/orm/query-guide) - Querying with Sessions

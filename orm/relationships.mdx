@@ -1,0 +1,695 @@
+---
+title: Relationships
+description: Defining ORM relationships with relationship(), foreign keys, back_populates, and cascade options
+---
+
+## Overview
+
+Relationships define how ORM mapped classes relate to each other, corresponding to foreign key relationships in the database. SQLAlchemy's `relationship()` function creates bidirectional associations between classes and provides automatic loading strategies.
+
+## Basic Relationship
+
+```python
+from typing import List, Optional
+from sqlalchemy import ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    
+    # One-to-many relationship
+    addresses: Mapped[List["Address"]] = relationship(back_populates="user")
+
+class Address(Base):
+    __tablename__ = "addresses"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    
+    # Many-to-one relationship
+    user: Mapped["User"] = relationship(back_populates="addresses")
+```
+
+## relationship() Function
+
+The `relationship()` function defines a relationship between two mapped classes.
+
+### Function Signature
+
+```python
+def relationship(
+    argument: Optional[str | Type] = None,
+    *,
+    # Basic configuration
+    secondary: Optional[Table | str] = None,
+    uselist: Optional[bool] = None,
+    
+    # Join conditions
+    primaryjoin: Optional[ColumnElement] = None,
+    secondaryjoin: Optional[ColumnElement] = None,
+    foreign_keys: Optional[List[Column]] = None,
+    remote_side: Optional[List[Column]] = None,
+    
+    # Bidirectional configuration
+    back_populates: Optional[str] = None,
+    backref: Optional[str | Tuple] = None,
+    
+    # Loading strategies
+    lazy: str = "select",
+    
+    # Persistence behavior
+    cascade: str = "save-update, merge",
+    passive_deletes: bool | str = False,
+    passive_updates: bool = True,
+    
+    # Other options
+    order_by: Optional[ColumnElement] = False,
+    viewonly: bool = False,
+    overlaps: Optional[str] = None,
+    
+    # ... additional parameters
+) -> RelationshipProperty:
+```
+
+## Relationship Patterns
+
+### One-to-Many
+
+One parent relates to multiple children:
+
+```python
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    
+    # User has many addresses
+    addresses: Mapped[List["Address"]] = relationship(
+        back_populates="user"
+    )
+
+class Address(Base):
+    __tablename__ = "addresses"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    
+    # Address belongs to one user
+    user: Mapped["User"] = relationship(back_populates="addresses")
+```
+
+<Note>
+The foreign key column (`user_id`) goes on the "many" side (Address).
+</Note>
+
+### Many-to-One
+
+The inverse of one-to-many:
+
+```python
+class Address(Base):
+    __tablename__ = "addresses"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    
+    # Many addresses to one user
+    user: Mapped["User"] = relationship()
+```
+
+### One-to-One
+
+Use `uselist=False` for one-to-one relationships:
+
+```python
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    
+    # One user has one profile
+    profile: Mapped["Profile"] = relationship(
+        back_populates="user",
+        uselist=False  # Single object, not a list
+    )
+
+class Profile(Base):
+    __tablename__ = "profiles"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bio: Mapped[str]
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True)
+    
+    user: Mapped["User"] = relationship(back_populates="profile")
+```
+
+### Many-to-Many
+
+Use an association table with `secondary`:
+
+```python
+from sqlalchemy import Table, Column, Integer, ForeignKey
+
+# Association table
+user_group_association = Table(
+    "user_group",
+    Base.metadata,
+    Column("user_id", ForeignKey("users.id"), primary_key=True),
+    Column("group_id", ForeignKey("groups.id"), primary_key=True),
+)
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    
+    # Many users in many groups
+    groups: Mapped[List["Group"]] = relationship(
+        secondary=user_group_association,
+        back_populates="users"
+    )
+
+class Group(Base):
+    __tablename__ = "groups"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    
+    users: Mapped[List["User"]] = relationship(
+        secondary=user_group_association,
+        back_populates="groups"
+    )
+```
+
+### Association Object Pattern
+
+Many-to-many with additional data:
+
+```python
+class Order(Base):
+    __tablename__ = "orders"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_name: Mapped[str]
+    
+    # Access OrderItem association objects
+    order_items: Mapped[List["OrderItem"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan"
+    )
+
+class Item(Base):
+    __tablename__ = "items"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    price: Mapped[float]
+
+class OrderItem(Base):
+    """Association object with extra data"""
+    __tablename__ = "order_items"
+    
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("orders.id"),
+        primary_key=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("items.id"),
+        primary_key=True
+    )
+    
+    # Extra data on the association
+    quantity: Mapped[int]
+    price: Mapped[float]  # Price at time of order
+    
+    # Relationships
+    order: Mapped["Order"] = relationship(back_populates="order_items")
+    item: Mapped["Item"] = relationship()
+```
+
+## back_populates vs backref
+
+<Tabs>
+  <Tab title="back_populates (Recommended)">
+    Explicit bidirectional relationships:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        addresses: Mapped[List["Address"]] = relationship(
+            back_populates="user"
+        )
+
+    class Address(Base):
+        __tablename__ = "addresses"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+        
+        user: Mapped["User"] = relationship(
+            back_populates="addresses"
+        )
+    ```
+
+    **Benefits:**
+    - Explicit configuration on both sides
+    - Better for type checkers
+    - Clearer intent
+  </Tab>
+
+  <Tab title="backref (Legacy)">
+    Automatic bidirectional relationship:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        # backref creates Address.user automatically
+        addresses: Mapped[List["Address"]] = relationship(
+            backref="user"
+        )
+
+    class Address(Base):
+        __tablename__ = "addresses"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+        
+        # No need to define user relationship
+    ```
+
+    **Limitations:**
+    - Implicit configuration
+    - Harder for type checkers
+    - Less clear
+  </Tab>
+</Tabs>
+
+## Loading Strategies
+
+Control how related objects are loaded:
+
+### lazy Parameter
+
+<ParamField path="lazy" type="str" default="select">
+  Determines when and how related objects are loaded.
+</ParamField>
+
+<Tabs>
+  <Tab title="select (Lazy)">
+    Load related objects on-demand with separate SELECT:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        # Load when accessed (default)
+        addresses: Mapped[List["Address"]] = relationship(lazy="select")
+
+    # Usage
+    user = session.get(User, 1)
+    # Accessing addresses triggers SELECT
+    for addr in user.addresses:  # SELECT addresses WHERE user_id = 1
+        print(addr.email)
+    ```
+  </Tab>
+
+  <Tab title="joined (Eager)">
+    Load with JOIN in the same query:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        # Load with LEFT OUTER JOIN
+        addresses: Mapped[List["Address"]] = relationship(lazy="joined")
+
+    # Usage - single query with JOIN
+    user = session.get(User, 1)
+    # SELECT user.*, address.* FROM user 
+    # LEFT OUTER JOIN address ON ...
+    ```
+  </Tab>
+
+  <Tab title="selectin (Eager)">
+    Load with separate SELECT ... IN query:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        # Load with IN query
+        addresses: Mapped[List["Address"]] = relationship(lazy="selectin")
+
+    # Usage - efficient for collections
+    users = session.scalars(select(User)).all()
+    # 1. SELECT users
+    # 2. SELECT addresses WHERE user_id IN (1, 2, 3, ...)
+    ```
+
+    <Note>
+    `selectin` is often the best choice for loading collections.
+    </Note>
+  </Tab>
+
+  <Tab title="subquery (Eager)">
+    Load with subquery:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        addresses: Mapped[List["Address"]] = relationship(lazy="subquery")
+    ```
+  </Tab>
+
+  <Tab title="raise / raise_on_sql">
+    Prevent lazy loading:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        # Raise error if accessed without eager loading
+        addresses: Mapped[List["Address"]] = relationship(lazy="raise")
+
+    # Must use eager loading:
+    from sqlalchemy.orm import selectinload
+    
+    user = session.scalar(
+        select(User)
+        .where(User.id == 1)
+        .options(selectinload(User.addresses))
+    )
+    ```
+  </Tab>
+</Tabs>
+
+### Per-Query Loading
+
+Override loading strategy per query:
+
+```python
+from sqlalchemy.orm import selectinload, joinedload, lazyload
+
+# Use selectin loading for this query
+users = session.scalars(
+    select(User).options(selectinload(User.addresses))
+).all()
+
+# Use joined loading
+user = session.scalar(
+    select(User)
+    .where(User.id == 1)
+    .options(joinedload(User.addresses))
+)
+
+# Disable loading (use existing or raise)
+user = session.scalar(
+    select(User)
+    .where(User.id == 1)
+    .options(lazyload(User.addresses))
+)
+```
+
+### Nested Loading
+
+Load multiple levels:
+
+```python
+from sqlalchemy.orm import selectinload
+
+# Load User -> addresses -> email_logs
+users = session.scalars(
+    select(User).options(
+        selectinload(User.addresses).selectinload(Address.email_logs)
+    )
+).all()
+```
+
+## Cascade Options
+
+Control how operations cascade to related objects:
+
+<ParamField path="cascade" type="str" default="save-update, merge">
+  Comma-separated list of cascade behaviors.
+</ParamField>
+
+<Tabs>
+  <Tab title="save-update">
+    Add related objects when parent is added:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        addresses: Mapped[List["Address"]] = relationship(
+            cascade="save-update"
+        )
+
+    # Adding user automatically adds addresses
+    user = User()
+    user.addresses = [Address(), Address()]
+    session.add(user)  # All addresses added too
+    ```
+  </Tab>
+
+  <Tab title="delete">
+    Delete related objects when parent is deleted:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        addresses: Mapped[List["Address"]] = relationship(
+            cascade="all, delete"
+        )
+
+    # Deleting user deletes all addresses
+    session.delete(user)
+    ```
+  </Tab>
+
+  <Tab title="delete-orphan">
+    Delete objects removed from collection:
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        
+        addresses: Mapped[List["Address"]] = relationship(
+            cascade="all, delete-orphan"
+        )
+
+    # Removing address from list deletes it
+    addr = user.addresses[0]
+    user.addresses.remove(addr)  # Will be deleted
+    session.commit()
+    ```
+
+    <Warning>
+    `delete-orphan` requires the relationship to be single-parent.
+    </Warning>
+  </Tab>
+
+  <Tab title="all">
+    Shorthand for common cascades:
+
+    ```python
+    addresses: Mapped[List["Address"]] = relationship(
+        cascade="all, delete-orphan"
+    )
+    # Equivalent to: save-update, merge, delete, delete-orphan, refresh-expire
+    ```
+  </Tab>
+</Tabs>
+
+### Common Cascade Patterns
+
+```python
+# Parent-child with full lifecycle management
+class Order(Base):
+    __tablename__ = "orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    
+    items: Mapped[List["OrderItem"]] = relationship(
+        cascade="all, delete-orphan",
+        back_populates="order"
+    )
+
+# Reference relationship (no cascades)
+class Address(Base):
+    __tablename__ = "addresses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    
+    user: Mapped["User"] = relationship(
+        cascade="save-update"  # Only track changes
+    )
+```
+
+## Foreign Key Configuration
+
+### Explicit foreign_keys
+
+Specify which columns are foreign keys:
+
+```python
+class Address(Base):
+    __tablename__ = "addresses"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int]
+    
+    user: Mapped["User"] = relationship(
+        foreign_keys=[user_id]  # Explicit FK
+    )
+```
+
+### Self-Referential Relationships
+
+Relate a table to itself:
+
+```python
+class Employee(Base):
+    __tablename__ = "employees"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    manager_id: Mapped[Optional[int]] = mapped_column(ForeignKey("employees.id"))
+    
+    # Employee -> manager (another Employee)
+    manager: Mapped[Optional["Employee"]] = relationship(
+        remote_side=[id],  # Specify "remote" side
+        back_populates="subordinates"
+    )
+    
+    # Employee -> subordinates
+    subordinates: Mapped[List["Employee"]] = relationship(
+        back_populates="manager"
+    )
+```
+
+### Custom Join Conditions
+
+Define complex join logic:
+
+```python
+from sqlalchemy import and_
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    
+    # Only active addresses
+    active_addresses: Mapped[List["Address"]] = relationship(
+        primaryjoin=and_(
+            id == Address.user_id,
+            Address.is_active == True
+        ),
+        viewonly=True  # Read-only
+    )
+```
+
+## Advanced Options
+
+<ParamField path="order_by" type="ColumnElement">
+  Order collection results:
+
+  ```python
+  addresses: Mapped[List["Address"]] = relationship(
+      order_by="Address.email"
+  )
+  ```
+</ParamField>
+
+<ParamField path="viewonly" type="bool" default="False">
+  Make relationship read-only (no persistence):
+
+  ```python
+  addresses: Mapped[List["Address"]] = relationship(viewonly=True)
+  ```
+</ParamField>
+
+<ParamField path="overlaps" type="str">
+  Indicate overlapping relationships to suppress warnings:
+
+  ```python
+  all_addresses: Mapped[List["Address"]] = relationship()
+  active_addresses: Mapped[List["Address"]] = relationship(
+      primaryjoin="...",
+      overlaps="all_addresses"  # Suppress overlap warning
+  )
+  ```
+</ParamField>
+
+<ParamField path="passive_deletes" type="bool | 'all'" default="False">
+  Let database handle deletes:
+
+  ```python
+  # Use ON DELETE CASCADE in database
+  user_id: Mapped[int] = mapped_column(
+      ForeignKey("users.id", ondelete="CASCADE")
+  )
+  user: Mapped["User"] = relationship(passive_deletes=True)
+  ```
+</ParamField>
+
+## Best Practices
+
+<Note>
+1. **Use `back_populates`** instead of `backref` for clarity
+2. **Choose appropriate lazy loading** - `selectin` is often best
+3. **Use cascade carefully** - understand delete-orphan implications  
+4. **Leverage type hints** with `Mapped[]` for better IDE support
+5. **Use viewonly** for computed/filtered relationships
+</Note>
+
+### Common Patterns
+
+```python
+# Standard one-to-many with cascade
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    
+    addresses: Mapped[List["Address"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="Address.email"
+    )
+
+class Address(Base):
+    __tablename__ = "addresses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str]
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    
+    user: Mapped["User"] = relationship(back_populates="addresses")
+```
+
+## See Also
+
+- [ORM Overview](/orm/overview)
+- [Declarative Configuration](/orm/declarative-config)
+- [Mapped Classes](/orm/mapped-classes)

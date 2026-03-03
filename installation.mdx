@@ -1,0 +1,256 @@
+---
+title: Installation
+description: Install SQLAlchemy with pip, conda, or other package managers
+---
+
+## Requirements
+
+<Warning>
+  SQLAlchemy requires **Python 3.10 or higher**.
+</Warning>
+
+Before installing SQLAlchemy, ensure you have:
+
+- Python 3.10, 3.11, 3.12, 3.13, or 3.14
+- pip (comes with Python) or another package manager
+- `typing-extensions >= 4.6.0` (installed automatically as a dependency)
+
+## Install with pip
+
+<Steps>
+  <Step title="Install SQLAlchemy">
+    Install the latest version of SQLAlchemy using pip:
+    
+    ```bash
+    pip install SQLAlchemy
+    ```
+    
+    This installs the core library with all essential dependencies.
+  </Step>
+  
+  <Step title="Verify installation">
+    Check that SQLAlchemy is installed correctly:
+    
+    ```bash
+    python -c "import sqlalchemy; print(sqlalchemy.__version__)"
+    ```
+    
+    You should see the version number (e.g., `2.1.0b2`).
+  </Step>
+</Steps>
+
+## Install with conda
+
+If you're using Anaconda or Miniconda:
+
+```bash
+conda install -c conda-forge sqlalchemy
+```
+
+## Database Drivers
+
+SQLAlchemy requires a database driver (DBAPI) to connect to databases. Install the appropriate driver for your database:
+
+<Tabs>
+  <Tab title="PostgreSQL">
+    <CodeGroup>
+      ```bash psycopg (recommended)
+      pip install "SQLAlchemy[postgresql]"
+      ```
+      
+      ```bash asyncpg (async)
+      pip install "SQLAlchemy[postgresql-asyncpg]"
+      ```
+      
+      ```bash pg8000 (pure Python)
+      pip install "SQLAlchemy[postgresql-pg8000]"
+      ```
+      
+      ```bash psycopg2-binary
+      pip install "SQLAlchemy[postgresql-psycopg2binary]"
+      ```
+    </CodeGroup>
+    
+    <Note>
+      `psycopg` (version 3) is the recommended driver for PostgreSQL. For async support, use `asyncpg`.
+    </Note>
+  </Tab>
+  
+  <Tab title="MySQL / MariaDB">
+    <CodeGroup>
+      ```bash mysqlclient (recommended)
+      pip install "SQLAlchemy[mysql]"
+      ```
+      
+      ```bash PyMySQL (pure Python)
+      pip install "SQLAlchemy[pymysql]"
+      ```
+      
+      ```bash mysql-connector
+      pip install "SQLAlchemy[mysql-connector]"
+      ```
+      
+      ```bash asyncmy (async)
+      pip install "SQLAlchemy[asyncmy]"
+      ```
+      
+      ```bash aiomysql (async)
+      pip install "SQLAlchemy[aiomysql]"
+      ```
+      
+      ```bash MariaDB Connector
+      pip install "SQLAlchemy[mariadb-connector]"
+      ```
+    </CodeGroup>
+  </Tab>
+  
+  <Tab title="SQLite">
+    SQLite support is included with Python's standard library - no additional driver needed!
+    
+    ```bash For async SQLite support
+    pip install "SQLAlchemy[aiosqlite]"
+    ```
+    
+    <Tip>
+      SQLite is perfect for development, testing, and small applications. No server setup required.
+    </Tip>
+  </Tab>
+  
+  <Tab title="Oracle">
+    <CodeGroup>
+      ```bash oracledb (recommended)
+      pip install "SQLAlchemy[oracle]"
+      ```
+      
+      ```bash cx_Oracle
+      pip install "SQLAlchemy[oracle-cxoracle]"
+      ```
+    </CodeGroup>
+    
+    <Note>
+      Oracle Database 12c and higher are supported. `oracledb` is the modern driver recommended by Oracle.
+    </Note>
+  </Tab>
+  
+  <Tab title="Microsoft SQL Server">
+    <CodeGroup>
+      ```bash pyodbc (recommended)
+      pip install "SQLAlchemy[mssql]"
+      ```
+      
+      ```bash pymssql
+      pip install "SQLAlchemy[mssql-pymssql]"
+      ```
+      
+      ```bash aioodbc (async)
+      pip install "SQLAlchemy[aioodbc]"
+      ```
+    </CodeGroup>
+  </Tab>
+</Tabs>
+
+## Async Support
+
+For asynchronous database operations, install the `asyncio` extra:
+
+```bash
+pip install "SQLAlchemy[asyncio]"
+```
+
+This installs `greenlet>=1`, which is required for async functionality.
+
+<Note>
+  Async support requires Python 3.10+ and a compatible async database driver like `asyncpg`, `aiomysql`, or `aiosqlite`.
+</Note>
+
+## Development Installation
+
+To install from source for development:
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/sqlalchemy/sqlalchemy.git
+    cd sqlalchemy
+    ```
+  </Step>
+  
+  <Step title="Install in editable mode">
+    ```bash
+    pip install -e .
+    ```
+  </Step>
+  
+  <Step title="Install development dependencies (optional)">
+    ```bash
+    pip install pytest pytest-xdist
+    ```
+  </Step>
+</Steps>
+
+## Optional Dependencies
+
+SQLAlchemy offers several optional dependency groups:
+
+### Type Checking with mypy
+
+```bash
+pip install "SQLAlchemy[mypy]"
+```
+
+Installs `mypy >= 1.19` and `types-greenlet >= 2` for static type checking support.
+
+### Multiple Drivers
+
+You can install multiple database drivers at once:
+
+```bash
+pip install "SQLAlchemy[postgresql,mysql,asyncio]"
+```
+
+## Verify Installation
+
+Confirm your installation by running a simple test:
+
+```python
+import sqlalchemy
+from sqlalchemy import create_engine
+
+# Print version
+print(f"SQLAlchemy version: {sqlalchemy.__version__}")
+
+# Test SQLite connection (no driver needed)
+engine = create_engine("sqlite:///:memory:")
+with engine.connect() as conn:
+    result = conn.execute(sqlalchemy.text("SELECT 'Hello SQLAlchemy' as message"))
+    print(result.fetchone())
+```
+
+Expected output:
+```
+SQLAlchemy version: 2.1.0b2
+('Hello SQLAlchemy',)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first SQLAlchemy application
+  </Card>
+  
+  <Card title="Documentation" icon="book" href="https://docs.sqlalchemy.org">
+    Explore comprehensive tutorials and API reference
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<Tip>
+  If you encounter issues during installation:
+  
+  - Ensure you're using Python 3.10 or higher: `python --version`
+  - Upgrade pip: `pip install --upgrade pip`
+  - Check for conflicting packages: `pip list | grep -i sqlalchemy`
+  - Visit the [SQLAlchemy discussion forum](https://github.com/sqlalchemy/sqlalchemy/discussions)
+</Tip>

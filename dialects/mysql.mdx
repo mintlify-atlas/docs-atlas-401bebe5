@@ -1,0 +1,501 @@
+---
+title: MySQL/MariaDB Dialect
+description: MySQL and MariaDB dialect features, drivers, and database-specific types
+---
+
+## Overview
+
+The MySQL dialect provides support for both MySQL and MariaDB databases. While MariaDB maintains fundamental compatibility with MySQL's protocols, SQLAlchemy can detect and accommodate differences between the two databases.
+
+<Note>
+**Version Support**
+- Normal support: MySQL 5.6+ / MariaDB 10+
+- Best effort: MySQL 5.0.2+ / MariaDB 5.0.2+
+</Note>
+
+## Installation
+
+<Tabs>
+  <Tab title="mysqlclient (Default)">
+    ```bash
+    pip install mysqlclient
+    ```
+    Maintained fork of MySQL-Python. Very stable, supports Python 2 and 3.
+  </Tab>
+  <Tab title="PyMySQL">
+    ```bash
+    pip install pymysql
+    ```
+    Pure Python driver. 100% compatible with MySQL-Python.
+  </Tab>
+  <Tab title="MySQL Connector">
+    ```bash
+    pip install mysql-connector-python
+    ```
+    Official MySQL driver from Oracle.
+  </Tab>
+  <Tab title="asyncmy (Async)">
+    ```bash
+    pip install asyncmy
+    ```
+    Async driver based on PyMySQL.
+  </Tab>
+  <Tab title="aiomysql (Async)">
+    ```bash
+    pip install aiomysql
+    ```
+    Async driver for MySQL.
+  </Tab>
+</Tabs>
+
+## Connecting to MySQL
+
+### Connection Strings
+
+<CodeGroup>
+```python mysqlclient (sync)
+from sqlalchemy import create_engine
+
+engine = create_engine(
+    "mysql+mysqldb://user:password@localhost:3306/mydb?charset=utf8mb4"
+)
+```
+
+```python PyMySQL
+engine = create_engine(
+    "mysql+pymysql://user:password@localhost:3306/mydb?charset=utf8mb4"
+)
+```
+
+```python MySQL Connector
+engine = create_engine(
+    "mysql+mysqlconnector://user:password@localhost:3306/mydb"
+)
+```
+
+```python asyncmy (async)
+from sqlalchemy.ext.asyncio import create_async_engine
+
+engine = create_async_engine(
+    "mysql+asyncmy://user:password@localhost:3306/mydb"
+)
+```
+
+```python aiomysql (async)
+engine = create_async_engine(
+    "mysql+aiomysql://user:password@localhost:3306/mydb"
+)
+```
+</CodeGroup>
+
+### Default Driver
+
+If no driver is specified, `mysqldb` (mysqlclient) is used:
+
+```python
+engine = create_engine(
+    "mysql://user:password@localhost/mydb?charset=utf8mb4"
+)
+```
+
+<Warning>
+Always specify `charset=utf8mb4` in your connection string for proper Unicode support.
+</Warning>
+
+## MariaDB Support
+
+### Automatic Detection
+
+SQLAlchemy automatically detects MariaDB and adjusts behavior:
+
+```python
+engine = create_engine(
+    "mysql+pymysql://user:pass@mariadb_host/dbname?charset=utf8mb4"
+)
+# SQLAlchemy detects MariaDB automatically
+```
+
+### MariaDB-Only Mode
+
+Enforce MariaDB-only connections:
+
+```python
+engine = create_engine(
+    "mariadb+pymysql://user:pass@mariadb_host/dbname?charset=utf8mb4"
+)
+```
+
+<Note>
+In MariaDB-only mode, replace `mysql_` prefixes with `mariadb_` in table options:
+- `mysql_engine` → `mariadb_engine`
+- `mysql_charset` → `mariadb_charset`
+</Note>
+
+```python
+from sqlalchemy import Table, Column, Integer, String, MetaData
+
+metadata = MetaData()
+
+my_table = Table(
+    'mytable',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('data', String(50)),
+    # Use both for compatibility
+    mysql_engine='InnoDB',
+    mariadb_engine='InnoDB'
+)
+```
+
+## MySQL-Specific Features
+
+### Storage Engines
+
+Specify storage engine for tables:
+
+```python
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50)),
+    mysql_engine='InnoDB',  # or 'MyISAM', 'Memory', etc.
+    mysql_charset='utf8mb4'
+)
+```
+
+### ENUM Type
+
+MySQL's native ENUM type:
+
+```python
+from sqlalchemy.dialects.mysql import ENUM
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column(
+        'status',
+        ENUM('pending', 'active', 'inactive', 'deleted')
+    )
+)
+```
+
+### SET Type
+
+MySQL's SET type for multiple values:
+
+```python
+from sqlalchemy.dialects.mysql import SET
+
+permissions = Table(
+    'permissions',
+    metadata,
+    Column('user_id', Integer, primary_key=True),
+    Column(
+        'roles',
+        SET('read', 'write', 'admin', 'delete')
+    )
+)
+```
+
+### JSON Type
+
+MySQL 5.7+ supports native JSON:
+
+```python
+from sqlalchemy.dialects.mysql import JSON
+
+products = Table(
+    'products',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('attributes', JSON)
+)
+
+# Query with JSON path
+stmt = products.select().where(
+    products.c.attributes['price'].astext.cast(Integer) > 100
+)
+```
+
+### MySQL Numeric Types
+
+```python
+from sqlalchemy.dialects.mysql import (
+    TINYINT,     # 1 byte integer
+    SMALLINT,    # 2 byte integer
+    MEDIUMINT,   # 3 byte integer
+    INTEGER,     # 4 byte integer
+    BIGINT,      # 8 byte integer
+    DECIMAL,     # Fixed precision
+    FLOAT,       # Floating point
+    DOUBLE,      # Double precision
+    REAL         # Alias for DOUBLE
+)
+
+scores = Table(
+    'scores',
+    metadata,
+    Column('id', INTEGER(unsigned=True), primary_key=True),
+    Column('value', TINYINT(unsigned=True))
+)
+```
+
+### MySQL String Types
+
+```python
+from sqlalchemy.dialects.mysql import (
+    CHAR,
+    VARCHAR,
+    TINYTEXT,
+    TEXT,
+    MEDIUMTEXT,
+    LONGTEXT
+)
+
+articles = Table(
+    'articles',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('title', VARCHAR(255)),
+    Column('summary', TEXT),
+    Column('content', LONGTEXT)
+)
+```
+
+### MySQL Binary Types
+
+```python
+from sqlalchemy.dialects.mysql import (
+    BINARY,
+    VARBINARY,
+    TINYBLOB,
+    BLOB,
+    MEDIUMBLOB,
+    LONGBLOB
+)
+
+files = Table(
+    'files',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('thumbnail', BLOB),
+    Column('data', LONGBLOB)
+)
+```
+
+### Other MySQL Types
+
+```python
+from sqlalchemy.dialects.mysql import (
+    BIT,         # Bit field
+    YEAR,        # Year (1901-2155)
+    TIME,        # Time
+    DATETIME,    # Date and time
+    TIMESTAMP,   # Timestamp
+    BOOLEAN      # Alias for TINYINT(1)
+)
+```
+
+## MariaDB-Specific Types
+
+```python
+from sqlalchemy.dialects.mysql import INET4, INET6
+
+network = Table(
+    'network',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('ipv4', INET4),
+    Column('ipv6', INET6)
+)
+```
+
+## INSERT ... ON DUPLICATE KEY UPDATE
+
+```python
+from sqlalchemy.dialects.mysql import insert
+
+stmt = insert(users).values(
+    id=1,
+    name='Alice',
+    email='alice@example.com'
+)
+
+# Update on duplicate key
+stmt = stmt.on_duplicate_key_update(
+    name=stmt.inserted.name,
+    email=stmt.inserted.email
+)
+
+connection.execute(stmt)
+```
+
+## Full-Text Search
+
+```python
+from sqlalchemy.dialects.mysql.expression import match
+
+articles = Table(
+    'articles',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('title', String(200)),
+    Column('content', TEXT)
+)
+
+# Full-text search
+stmt = articles.select().where(
+    match(articles.c.title, articles.c.content, against='python database')
+)
+```
+
+Create FULLTEXT index:
+
+```python
+from sqlalchemy import Index
+
+Index(
+    'ft_articles',
+    articles.c.title,
+    articles.c.content,
+    mysql_prefix='FULLTEXT'
+)
+```
+
+## Connection Timeouts
+
+MySQL closes idle connections after 8 hours by default. Use `pool_recycle`:
+
+```python
+engine = create_engine(
+    "mysql+pymysql://user:pass@localhost/mydb",
+    pool_recycle=3600,  # Recycle connections after 1 hour
+    pool_pre_ping=True   # Verify connections before using
+)
+```
+
+## SSL Connections
+
+<Tabs>
+  <Tab title="Query String">
+    ```python
+    engine = create_engine(
+        "mysql+pymysql://user:pass@host/db"
+        "?ssl_ca=/path/to/ca.pem"
+        "&ssl_cert=/path/to/client-cert.pem"
+        "&ssl_key=/path/to/client-key.pem"
+    )
+    ```
+  </Tab>
+  <Tab title="connect_args">
+    ```python
+    engine = create_engine(
+        "mysql+pymysql://user:pass@host/db",
+        connect_args={
+            "ssl": {
+                "ca": "/path/to/ca.pem",
+                "cert": "/path/to/client-cert.pem",
+                "key": "/path/to/client-key.pem"
+            }
+        }
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## Case Sensitivity
+
+MySQL table and column names may be case-sensitive depending on the OS:
+
+- **Linux**: Case-sensitive by default
+- **Windows/macOS**: Case-insensitive
+
+<Warning>
+For portability, always use lowercase table and column names.
+</Warning>
+
+## AUTO_INCREMENT
+
+MySQL uses AUTO_INCREMENT for primary keys:
+
+```python
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),  # AUTO_INCREMENT implied
+    Column('name', String(50))
+)
+```
+
+Customize starting value:
+
+```python
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50)),
+    mysql_auto_increment=1000
+)
+```
+
+## LIMIT with Offset
+
+```python
+from sqlalchemy.dialects.mysql import limit
+
+# Standard approach
+stmt = users.select().limit(10).offset(20)
+
+# MySQL-specific LIMIT clause
+from sqlalchemy import select
+stmt = select(users).limit(10, 20)  # LIMIT 20, 10
+```
+
+## Performance Tips
+
+1. **Use InnoDB** for transactional tables with foreign keys
+2. **Always specify charset=utf8mb4** for full Unicode support
+3. **Use connection pooling** with `pool_pre_ping=True`
+4. **Set pool_recycle** to prevent connection timeouts
+5. **Create proper indexes** on frequently queried columns
+6. **Use EXPLAIN** to analyze query performance
+
+## Common Issues
+
+### Character Encoding
+
+Always use `utf8mb4` for full Unicode support including emojis:
+
+```python
+engine = create_engine(
+    "mysql+pymysql://user:pass@localhost/mydb?charset=utf8mb4",
+    connect_args={"charset": "utf8mb4"}
+)
+```
+
+### Connection Lost
+
+Use `pool_pre_ping` to check connections:
+
+```python
+engine = create_engine(
+    "mysql://...",
+    pool_pre_ping=True,
+    pool_recycle=3600
+)
+```
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Dialect Overview" href="/dialects/overview">
+    Learn about SQLAlchemy's dialect system
+  </Card>
+  <Card title="MySQL Documentation" href="https://dev.mysql.com/doc/" icon="link">
+    Official MySQL documentation
+  </Card>
+</CardGroup>

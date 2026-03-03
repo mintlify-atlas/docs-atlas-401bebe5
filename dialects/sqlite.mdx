@@ -1,0 +1,439 @@
+---
+title: SQLite Dialect
+description: SQLite dialect features, drivers, and embedded database capabilities
+---
+
+## Overview
+
+The SQLite dialect provides support for SQLite, a self-contained, serverless, zero-configuration SQL database engine. SQLite is the most widely deployed database engine in the world.
+
+<Note>
+**Version Support**
+- Normal support: SQLite 3.12+
+- Best effort: SQLite 3.7.16+
+</Note>
+
+## Installation
+
+<Tabs>
+  <Tab title="pysqlite (Built-in)">
+    ```bash
+    # Included with Python's standard library
+    # No installation required
+    ```
+    SQLite support is included in Python's standard library via the `sqlite3` module.
+  </Tab>
+  <Tab title="aiosqlite (Async)">
+    ```bash
+    pip install aiosqlite
+    ```
+    Async driver for SQLite based on Python's sqlite3.
+  </Tab>
+  <Tab title="pysqlcipher">
+    ```bash
+    pip install pysqlcipher3
+    ```
+    Encrypted SQLite database support.
+  </Tab>
+</Tabs>
+
+## Connecting to SQLite
+
+### Connection Strings
+
+<CodeGroup>
+```python In-Memory Database
+from sqlalchemy import create_engine
+
+# In-memory database (temporary)
+engine = create_engine("sqlite:///:memory:")
+```
+
+```python File-Based Database
+# Relative path
+engine = create_engine("sqlite:///mydb.db")
+
+# Absolute path (Unix)
+engine = create_engine("sqlite:////absolute/path/to/mydb.db")
+
+# Absolute path (Windows)
+engine = create_engine("sqlite:///C:/path/to/mydb.db")
+```
+
+```python aiosqlite (async)
+from sqlalchemy.ext.asyncio import create_async_engine
+
+engine = create_async_engine("sqlite+aiosqlite:///mydb.db")
+```
+
+```python pysqlcipher (encrypted)
+engine = create_engine(
+    "sqlite+pysqlcipher://:password@/path/to/encrypted.db"
+)
+```
+</CodeGroup>
+
+### Default Driver
+
+If no driver is specified, `pysqlite` (Python's built-in `sqlite3`) is used:
+
+```python
+engine = create_engine("sqlite:///mydb.db")
+```
+
+## SQLite-Specific Features
+
+### Date and Time Types
+
+SQLite doesn't have native date/time types. SQLAlchemy stores them as ISO-formatted strings:
+
+```python
+from sqlalchemy import Table, Column, Integer, String, DateTime, Date, Time
+from datetime import datetime
+
+events = Table(
+    'events',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('created', DateTime, default=datetime.utcnow),
+    Column('date', Date),
+    Column('time', Time)
+)
+
+# Dates are stored as: '2024-01-15'
+# DateTimes are stored as: '2024-01-15 14:30:00.000000'
+# Times are stored as: '14:30:00.000000'
+```
+
+### Auto Increment Behavior
+
+SQLite has implicit auto-increment for INTEGER PRIMARY KEY columns:
+
+```python
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),  # Auto-increments automatically
+    Column('name', String)
+)
+```
+
+This generates:
+```sql
+CREATE TABLE users (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name VARCHAR
+)
+```
+
+<Note>
+SQLite only auto-increments when the column type is exactly `INTEGER PRIMARY KEY`.
+</Note>
+
+### Explicit AUTOINCREMENT Keyword
+
+Use `sqlite_autoincrement=True` for explicit AUTOINCREMENT:
+
+```python
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    sqlite_autoincrement=True
+)
+```
+
+Generates:
+```sql
+CREATE TABLE users (
+    id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    name VARCHAR
+)
+```
+
+<Warning>
+Explicit AUTOINCREMENT has overhead and is rarely needed. Use only when you specifically need to prevent reuse of deleted row IDs.
+</Warning>
+
+### Type Affinity
+
+SQLite uses type affinity based on naming conventions:
+
+- Names containing `INT` → INTEGER affinity
+- Names containing `CHAR`, `CLOB`, or `TEXT` → TEXT affinity
+- Names containing `BLOB` or no type → BLOB affinity
+- Names containing `REAL`, `FLOA`, or `DOUB` → REAL affinity
+- Names containing `DEC`, `NUM` → NUMERIC affinity
+
+```python
+from sqlalchemy import BigInteger
+
+# BigInteger renders as INTEGER for auto-increment to work
+table = Table(
+    'my_table',
+    metadata,
+    Column('id', BigInteger().with_variant(Integer, 'sqlite'), primary_key=True)
+)
+```
+
+### Foreign Keys
+
+SQLite foreign key support must be enabled per connection:
+
+```python
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+engine = create_engine("sqlite:///mydb.db")
+```
+
+### SQLite Pragmas
+
+Configure SQLite behavior with PRAGMA statements:
+
+```python
+from sqlalchemy import event, create_engine
+
+engine = create_engine("sqlite:///mydb.db")
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")      # Write-Ahead Logging
+    cursor.execute("PRAGMA synchronous=NORMAL")    # Faster writes
+    cursor.execute("PRAGMA cache_size=10000")      # 10MB cache
+    cursor.execute("PRAGMA temp_store=MEMORY")     # Use memory for temp
+    cursor.close()
+```
+
+### JSON Support
+
+SQLite 3.9+ has JSON functions:
+
+```python
+from sqlalchemy.dialects.sqlite import JSON
+
+products = Table(
+    'products',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('data', JSON)
+)
+
+# JSON queries (SQLite 3.38+)
+stmt = products.select().where(
+    products.c.data['price'].astext.cast(Integer) > 100
+)
+```
+
+### INSERT OR REPLACE
+
+```python
+from sqlalchemy.dialects.sqlite import insert
+
+stmt = insert(users).values(
+    id=1,
+    name='Alice',
+    email='alice@example.com'
+)
+
+# INSERT OR REPLACE
+stmt = stmt.on_conflict_do_update(
+    index_elements=['id'],
+    set_=dict(
+        name=stmt.excluded.name,
+        email=stmt.excluded.email
+    )
+)
+
+connection.execute(stmt)
+```
+
+## SQLite Types
+
+```python
+from sqlalchemy.dialects.sqlite import (
+    BLOB,        # Binary data
+    BOOLEAN,     # 0 or 1
+    CHAR,        # Fixed-length string
+    DATE,        # ISO date string
+    DATETIME,    # ISO datetime string
+    DECIMAL,     # Numeric
+    FLOAT,       # Real number
+    INTEGER,     # Integer
+    JSON,        # JSON data (SQLite 3.9+)
+    NUMERIC,     # Numeric
+    REAL,        # Real number
+    SMALLINT,    # Integer
+    TEXT,        # Variable-length string
+    TIME,        # ISO time string
+    TIMESTAMP,   # ISO timestamp string
+    VARCHAR      # Variable-length string
+)
+```
+
+## Limitations
+
+### No ALTER TABLE Support
+
+SQLite has limited ALTER TABLE support:
+
+<Warning>
+**SQLite ALTER TABLE Limitations:**
+- Cannot drop columns (before SQLite 3.35.0)
+- Cannot modify columns
+- Cannot add constraints to existing tables
+- Can only add columns with limited constraints
+</Warning>
+
+Workaround using table recreation:
+
+```python
+from sqlalchemy import Table, MetaData
+
+# 1. Create new table with desired schema
+# 2. Copy data from old table
+# 3. Drop old table
+# 4. Rename new table to old name
+
+# Or use Alembic migrations with batch mode
+```
+
+### No RIGHT/FULL OUTER JOIN
+
+SQLite only supports LEFT OUTER JOIN:
+
+```python
+# This works
+stmt = select(users).join(orders, isouter=True)
+
+# RIGHT OUTER JOIN not supported - must reverse the join
+```
+
+### No Native BOOLEAN Type
+
+Booleans stored as 0/1 integers:
+
+```python
+from sqlalchemy import Boolean
+
+users = Table(
+    'users',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('is_active', Boolean)  # Stored as 0 or 1
+)
+```
+
+### Concurrent Writes
+
+SQLite locks the entire database during writes:
+
+```python
+# Use WAL mode for better concurrency
+@event.listens_for(engine, "connect")
+def set_wal_mode(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
+```
+
+## In-Memory Databases
+
+### Shared In-Memory Database
+
+```python
+# Shared in-memory database across connections
+engine = create_engine(
+    "sqlite:///file:memdb1?mode=memory&cache=shared",
+    creator=lambda: sqlite3.connect(
+        'file:memdb1?mode=memory&cache=shared',
+        uri=True
+    )
+)
+```
+
+### Temporary Database
+
+```python
+# Creates a temporary file that's deleted on close
+engine = create_engine("sqlite://")
+```
+
+## Connection Pool Settings
+
+SQLite typically uses a single connection:
+
+```python
+from sqlalchemy.pool import StaticPool
+
+# In-memory database with shared connection
+engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={'check_same_thread': False},
+    poolclass=StaticPool
+)
+```
+
+<Warning>
+Set `check_same_thread=False` only for in-memory databases or when you understand the threading implications.
+</Warning>
+
+## Performance Tips
+
+1. **Enable WAL mode** for better concurrent read performance:
+   ```sql
+   PRAGMA journal_mode=WAL;
+   ```
+
+2. **Increase cache size**:
+   ```sql
+   PRAGMA cache_size=10000;  -- 10MB cache
+   ```
+
+3. **Use transactions** for bulk inserts:
+   ```python
+   with engine.begin() as conn:
+       for item in items:
+           conn.execute(insert(table).values(**item))
+   ```
+
+4. **Create indexes** on frequently queried columns
+
+5. **Use ANALYZE** to update query optimizer statistics:
+   ```python
+   connection.execute(text("ANALYZE"))
+   ```
+
+## Use Cases
+
+SQLite is ideal for:
+
+- **Embedded applications** - No separate server process
+- **Development/testing** - Quick setup, no configuration
+- **Small to medium websites** - Low to moderate traffic
+- **Mobile applications** - Built into iOS and Android
+- **Desktop applications** - Local data storage
+- **Caching** - Fast local cache
+- **Prototyping** - Rapid development
+
+<Note>
+For high-concurrency write scenarios or large-scale applications, consider PostgreSQL or MySQL.
+</Note>
+
+## See Also
+
+<CardGroup cols={2}>
+  <Card title="Dialect Overview" href="/dialects/overview">
+    Learn about SQLAlchemy's dialect system
+  </Card>
+  <Card title="SQLite Documentation" href="https://www.sqlite.org/docs.html" icon="link">
+    Official SQLite documentation
+  </Card>
+</CardGroup>

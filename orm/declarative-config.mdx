@@ -1,0 +1,524 @@
+---
+title: Declarative Configuration
+description: DeclarativeBase, declarative_base(), and registry for ORM configuration
+---
+
+## Overview
+
+SQLAlchemy's declarative system provides the foundation for defining ORM mappings. It consists of three main components: `DeclarativeBase`, the legacy `declarative_base()` function, and the `registry` object.
+
+## DeclarativeBase
+
+The modern, type-checker friendly way to create a declarative base class.
+
+### Basic Usage
+
+```python
+from sqlalchemy.orm import DeclarativeBase
+
+class Base(DeclarativeBase):
+    pass
+
+# Now use Base as the parent for all mapped classes
+class User(Base):
+    __tablename__ = "users"
+    # ... column definitions
+```
+
+<Note>
+`DeclarativeBase` was introduced in SQLAlchemy 2.0 and is the recommended approach for new projects as it provides better IDE support and type checking.
+</Note>
+
+### Configuration Options
+
+Customize the base class with class-level attributes:
+
+<Tabs>
+  <Tab title="Custom MetaData">
+    ```python
+    from sqlalchemy import MetaData
+    from sqlalchemy.orm import DeclarativeBase
+
+    # Create custom metadata with schema
+    my_metadata = MetaData(schema="myapp")
+
+    class Base(DeclarativeBase):
+        metadata = my_metadata
+
+    # All tables will be in 'myapp' schema
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+    ```
+  </Tab>
+
+  <Tab title="Type Annotation Map">
+    ```python
+    from typing import Annotated
+    from sqlalchemy import String, BigInteger
+    from sqlalchemy.orm import DeclarativeBase
+
+    # Define custom type annotations
+    str255 = Annotated[str, "varchar_255"]
+    bigint = Annotated[int, "bigint"]
+
+    class Base(DeclarativeBase):
+        type_annotation_map = {
+            str255: String(255),
+            bigint: BigInteger(),
+        }
+
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[bigint] = mapped_column(primary_key=True)
+        name: Mapped[str255]  # Will use String(255)
+    ```
+  </Tab>
+
+  <Tab title="Custom Registry">
+    ```python
+    from sqlalchemy.orm import DeclarativeBase, registry
+
+    # Create registry with options
+    my_registry = registry(
+        metadata=MetaData(),
+        type_annotation_map={...}
+    )
+
+    class Base(DeclarativeBase):
+        # Use pre-configured registry
+        registry = my_registry
+    ```
+  </Tab>
+</Tabs>
+
+### Class Attributes
+
+<ParamField path="metadata" type="MetaData">
+  Optional MetaData collection for Table objects. If not specified, a new MetaData is created automatically.
+</ParamField>
+
+<ParamField path="registry" type="registry">
+  Optional pre-configured registry. If not specified, a new registry is created using the metadata and type_annotation_map.
+</ParamField>
+
+<ParamField path="type_annotation_map" type="dict[type, TypeEngine]">
+  Maps Python types to SQLAlchemy type engines. Used by mapped_column() to derive SQL types from annotations.
+</ParamField>
+
+## declarative_base() Function
+
+The legacy function-based approach to creating a declarative base.
+
+<Warning>
+While `declarative_base()` still works in SQLAlchemy 2.0+, it is superseded by `DeclarativeBase`. Use `DeclarativeBase` for new projects to get better type checking support.
+</Warning>
+
+### Basic Usage
+
+```python
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = "users"
+    # ... column definitions
+```
+
+### Function Signature
+
+```python
+def declarative_base(
+    *,
+    metadata: Optional[MetaData] = None,
+    mapper: Optional[Callable[..., Mapper]] = None,
+    cls: Type[Any] = object,
+    name: str = "Base",
+    class_registry: Optional[dict] = None,
+    type_annotation_map: Optional[dict] = None,
+    constructor: Callable[..., None] = _declarative_constructor,
+    metaclass: Type[Any] = DeclarativeMeta,
+) -> Any:
+```
+
+<ParamField path="metadata" type="MetaData">
+  Optional MetaData instance. If None, a blank MetaData is created.
+</ParamField>
+
+<ParamField path="cls" type="type">
+  Base class to use. Defaults to `object`. Can be a tuple of classes.
+</ParamField>
+
+<ParamField path="name" type="str" default="Base">
+  Display name for the generated base class. Useful for debugging.
+</ParamField>
+
+<ParamField path="type_annotation_map" type="dict">
+  Dictionary mapping Python types to SQLAlchemy types.
+</ParamField>
+
+<ParamField path="constructor" type="Callable">
+  Custom `__init__` implementation. Defaults to a constructor that assigns keyword arguments to attributes.
+</ParamField>
+
+<ParamField path="metaclass" type="type" default="DeclarativeMeta">
+  Metaclass to use for the base class.
+</ParamField>
+
+### Examples
+
+<Steps>
+  <Step title="Custom Constructor">
+    ```python
+    def my_constructor(self, **kwargs):
+        """Custom initialization logic"""
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+        self.initialized = True
+
+    Base = declarative_base(constructor=my_constructor)
+
+    class User(Base):
+        __tablename__ = "users"
+        id = Column(Integer, primary_key=True)
+        name = Column(String)
+
+    # Custom constructor is used
+    user = User(name="Alice")
+    assert user.initialized == True
+    ```
+  </Step>
+
+  <Step title="Shared Registry">
+    ```python
+    # Share class registry between multiple bases
+    shared_registry = {}
+
+    Base1 = declarative_base(class_registry=shared_registry)
+    Base2 = declarative_base(class_registry=shared_registry)
+
+    class User(Base1):
+        __tablename__ = "users"
+        # ...
+
+    class Address(Base2):
+        __tablename__ = "addresses"
+        # Can reference User by string name
+        user_id = Column(ForeignKey("users.id"))
+        user = relationship("User")  # Works across bases
+    ```
+  </Step>
+</Steps>
+
+## registry Object
+
+The `registry` is the core object that manages all ORM mappings.
+
+### Creating a Registry
+
+```python
+from sqlalchemy.orm import registry
+
+# Create a registry
+reg = registry()
+
+# Use with DeclarativeBase
+class Base(DeclarativeBase):
+    registry = reg
+
+# Or use directly with mapper functions
+@reg.mapped
+class User:
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+```
+
+### Constructor Parameters
+
+```python
+class registry:
+    def __init__(
+        self,
+        *,
+        metadata: Optional[MetaData] = None,
+        class_registry: Optional[dict] = None,
+        type_annotation_map: Optional[dict] = None,
+        constructor: Callable[..., None] = _declarative_constructor,
+    ):
+```
+
+<ParamField path="metadata" type="MetaData">
+  MetaData collection for declarative table mapping. If None, creates a blank MetaData.
+</ParamField>
+
+<ParamField path="class_registry" type="dict">
+  Optional shared registry for string-based class name lookups in relationships.
+</ParamField>
+
+<ParamField path="type_annotation_map" type="dict">
+  Maps Python types to SQLAlchemy TypeEngine classes for use with Mapped[] annotations.
+</ParamField>
+
+<ParamField path="constructor" type="Callable">
+  Default `__init__` for mapped classes without their own `__init__`.
+</ParamField>
+
+### Registry Methods
+
+#### generate_base()
+
+Create a declarative base class from the registry:
+
+```python
+reg = registry()
+Base = reg.generate_base()
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+```
+
+#### mapped()
+
+Decorator for declarative mapping without a base class:
+
+```python
+reg = registry()
+
+@reg.mapped
+class User:
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+```
+
+#### map_imperatively()
+
+Imperatively map a class to a table:
+
+```python
+from sqlalchemy import Table, Column, Integer, String
+
+reg = registry()
+metadata = MetaData()
+
+user_table = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("name", String),
+)
+
+class User:
+    pass
+
+reg.map_imperatively(User, user_table)
+```
+
+#### configure()
+
+Configure all unconfigured mappers:
+
+```python
+reg = registry()
+
+# Define classes...
+
+# Configure all relationships
+reg.configure()
+```
+
+<ParamField path="cascade" type="bool" default="False">
+  If True, also configure dependent registries that are linked via relationships.
+</ParamField>
+
+#### dispose()
+
+Dispose of all mappers in the registry:
+
+```python
+reg.dispose(cascade=True)
+```
+
+### Registry Properties
+
+<ParamField path="mappers" type="frozenset[Mapper]" readonly>
+  Read-only collection of all Mapper objects in this registry.
+
+  ```python
+  for mapper in reg.mappers:
+      print(mapper.class_)
+  ```
+</ParamField>
+
+<ParamField path="metadata" type="MetaData">
+  The MetaData collection associated with this registry.
+
+  ```python
+  # Create all tables
+  reg.metadata.create_all(engine)
+  ```
+</ParamField>
+
+<ParamField path="type_annotation_map" type="dict">
+  Type mapping dictionary that can be updated:
+
+  ```python
+  from sqlalchemy import String
+  
+  reg.update_type_annotation_map({
+      str: String(50)
+  })
+  ```
+</ParamField>
+
+## Advanced Configuration
+
+### Multiple Registries
+
+Use multiple registries for different database schemas or purposes:
+
+```python
+from sqlalchemy.orm import registry
+
+# Registry for application data
+app_registry = registry(metadata=MetaData(schema="app"))
+
+# Registry for audit/logging data  
+audit_registry = registry(metadata=MetaData(schema="audit"))
+
+class AppBase(DeclarativeBase):
+    registry = app_registry
+
+class AuditBase(DeclarativeBase):
+    registry = audit_registry
+
+class User(AppBase):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+class UserAudit(AuditBase):
+    __tablename__ = "user_audit"
+    id: Mapped[int] = mapped_column(primary_key=True)
+```
+
+### Custom Type Maps
+
+Define application-wide type conventions:
+
+```python
+from decimal import Decimal
+from datetime import datetime
+from sqlalchemy import String, Numeric, DateTime
+from typing import Annotated
+
+# Define annotated types
+str50 = Annotated[str, "varchar50"]
+str255 = Annotated[str, "varchar255"]
+money = Annotated[Decimal, "money"]
+
+class Base(DeclarativeBase):
+    type_annotation_map = {
+        str50: String(50),
+        str255: String(255),
+        money: Numeric(10, 2),
+        datetime: DateTime(timezone=True),
+    }
+
+class Product(Base):
+    __tablename__ = "products"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str255]  # VARCHAR(255)
+    sku: Mapped[str50]    # VARCHAR(50)
+    price: Mapped[money]  # NUMERIC(10, 2)
+    created_at: Mapped[datetime]  # TIMESTAMP WITH TIME ZONE
+```
+
+### Dynamic Tablename
+
+Use declared_attr for dynamic configuration:
+
+```python
+from sqlalchemy.orm import declared_attr
+
+class TableNameMixin:
+    @declared_attr.directive
+    def __tablename__(cls) -> str:
+        # Auto-generate tablename from class name
+        return cls.__name__.lower()
+
+class Base(DeclarativeBase):
+    pass
+
+class UserAccount(TableNameMixin, Base):
+    # __tablename__ will be "useraccount"
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+class ProductItem(TableNameMixin, Base):
+    # __tablename__ will be "productitem"
+    id: Mapped[int] = mapped_column(primary_key=True)
+```
+
+## Comparison: Old vs New
+
+<Tabs>
+  <Tab title="Modern (2.0+)">
+    ```python
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+    class Base(DeclarativeBase):
+        pass
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str]
+        email: Mapped[Optional[str]]
+    ```
+
+    **Benefits:**
+    - Full type checking support
+    - Better IDE autocomplete
+    - Clearer intent with Mapped[] annotations
+    - No need to import Column, Integer, String, etc.
+  </Tab>
+
+  <Tab title="Legacy (1.x)">
+    ```python
+    from sqlalchemy import Column, Integer, String
+    from sqlalchemy.orm import declarative_base
+
+    Base = declarative_base()
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        id = Column(Integer, primary_key=True)
+        name = Column(String, nullable=False)
+        email = Column(String, nullable=True)
+    ```
+
+    **Limitations:**
+    - No type hints for mypy/pyright
+    - Harder to understand nullability
+    - More verbose with explicit Column objects
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<Note>
+1. **Use DeclarativeBase** for all new projects
+2. **Centralize type mappings** in the base class
+3. **Use mixins** for common patterns across models
+4. **Keep registry per logical database** when using multiple databases
+</Note>
+
+## See Also
+
+- [ORM Overview](/orm/overview)
+- [Mapped Classes](/orm/mapped-classes)
+- [Relationships](/orm/relationships)

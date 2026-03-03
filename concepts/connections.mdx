@@ -1,0 +1,516 @@
+---
+title: Connection Management
+description: Learn how to manage database connections, execute statements, handle transactions, and configure connection pooling in SQLAlchemy.
+---
+
+# Connection Management
+
+The **Connection** object represents a single database connection and provides methods for executing SQL statements and managing transactions. Connections are obtained from an Engine's connection pool.
+
+## Basic Connection Usage
+
+### Acquiring a Connection
+
+Connections are obtained from an Engine using the `connect()` method:
+
+```python
+from sqlalchemy import create_engine, text
+
+engine = create_engine("postgresql://user:pass@localhost/dbname")
+
+# Get a connection from the pool
+with engine.connect() as conn:
+    result = conn.execute(text("SELECT * FROM users"))
+    for row in result:
+        print(row)
+# Connection automatically returned to pool
+```
+
+<Note>
+Always use a context manager (`with` statement) to ensure connections are properly returned to the pool, even if an exception occurs.
+</Note>
+
+### Connection with Transaction
+
+Use `engine.begin()` to get a connection with an automatic transaction:
+
+```python
+with engine.begin() as conn:
+    conn.execute(text("INSERT INTO users (name) VALUES (:name)"), {"name": "Alice"})
+    conn.execute(text("INSERT INTO users (name) VALUES (:name)"), {"name": "Bob"})
+# Transaction commits automatically on success, rolls back on exception
+```
+
+## Executing Statements
+
+### Text Statements
+
+```python
+from sqlalchemy import text
+
+with engine.connect() as conn:
+    # Simple query
+    result = conn.execute(text("SELECT * FROM users WHERE id = :id"), {"id": 1})
+    row = result.fetchone()
+    
+    # Multiple parameter sets (executemany)
+    conn.execute(
+        text("INSERT INTO users (name, email) VALUES (:name, :email)"),
+        [
+            {"name": "Alice", "email": "alice@example.com"},
+            {"name": "Bob", "email": "bob@example.com"}
+        ]
+    )
+    conn.commit()
+```
+
+### Core Expression Language
+
+```python
+from sqlalchemy import select, insert, update, delete, MetaData, Table
+
+metadata = MetaData()
+users = Table("users", metadata, autoload_with=engine)
+
+with engine.connect() as conn:
+    # SELECT
+    stmt = select(users).where(users.c.name == "Alice")
+    result = conn.execute(stmt)
+    
+    # INSERT
+    stmt = insert(users).values(name="Charlie", email="charlie@example.com")
+    conn.execute(stmt)
+    
+    # UPDATE
+    stmt = update(users).where(users.c.id == 1).values(email="newemail@example.com")
+    conn.execute(stmt)
+    
+    # DELETE
+    stmt = delete(users).where(users.c.id == 1)
+    conn.execute(stmt)
+    
+    conn.commit()
+```
+
+## Transaction Management
+
+### Manual Transactions
+
+Explicitly control transaction boundaries:
+
+```python
+with engine.connect() as conn:
+    # Start a transaction
+    trans = conn.begin()
+    try:
+        conn.execute(text("INSERT INTO accounts (balance) VALUES (100)"))
+        conn.execute(text("INSERT INTO transactions (type) VALUES ('deposit')"))
+        trans.commit()
+    except Exception:
+        trans.rollback()
+        raise
+```
+
+### Automatic Transaction (Recommended)
+
+```python
+# Transaction starts automatically and commits on success
+with engine.begin() as conn:
+    conn.execute(text("INSERT INTO accounts (balance) VALUES (100)"))
+    conn.execute(text("INSERT INTO transactions (type) VALUES ('deposit')"))
+# Auto-commit on exit, auto-rollback on exception
+```
+
+### Nested Transactions (Savepoints)
+
+Create savepoints within a transaction:
+
+```python
+with engine.begin() as conn:
+    conn.execute(text("INSERT INTO users (name) VALUES ('Alice')"))
+    
+    # Create a savepoint
+    savepoint = conn.begin_nested()
+    try:
+        conn.execute(text("INSERT INTO users (name) VALUES ('Bob')"))
+        savepoint.commit()
+    except Exception:
+        savepoint.rollback()
+    
+    # This INSERT is committed regardless of savepoint outcome
+    conn.execute(text("INSERT INTO users (name) VALUES ('Charlie')"))
+```
+
+### Transaction Isolation Levels
+
+Set isolation level per connection:
+
+```python
+# Set isolation level for this connection
+with engine.connect() as conn:
+    conn = conn.execution_options(isolation_level="SERIALIZABLE")
+    with conn.begin():
+        result = conn.execute(text("SELECT * FROM accounts WHERE id = 1"))
+        # ... transactional work at SERIALIZABLE level
+```
+
+Available isolation levels (database-dependent):
+- `"SERIALIZABLE"` - Highest isolation, prevents all anomalies
+- `"REPEATABLE READ"` - Prevents non-repeatable reads
+- `"READ COMMITTED"` - Prevents dirty reads (default for most databases)
+- `"READ UNCOMMITTED"` - Lowest isolation
+- `"AUTOCOMMIT"` - No transaction, each statement commits immediately
+
+<Warning>
+Isolation levels must be set before a transaction begins. You cannot change the isolation level of an active transaction.
+</Warning>
+
+## Connection Pooling
+
+SQLAlchemy uses connection pooling to manage database connections efficiently. The pool maintains a set of connections that can be reused.
+
+### Pool Types
+
+<Steps>
+  <Step title="QueuePool (Default)">
+    The default pool for most databases. Maintains a fixed pool with overflow support.
+    
+    ```python
+    from sqlalchemy.pool import QueuePool
+    
+    engine = create_engine(
+        "postgresql://...",
+        poolclass=QueuePool,
+        pool_size=5,      # Keep 5 connections open
+        max_overflow=10,  # Allow up to 15 total connections
+        pool_timeout=30   # Wait up to 30 seconds for a connection
+    )
+    ```
+  </Step>
+  
+  <Step title="NullPool">
+    No pooling - creates and disposes connections for each request.
+    
+    ```python
+    from sqlalchemy.pool import NullPool
+    
+    engine = create_engine(
+        "postgresql://...",
+        poolclass=NullPool
+    )
+    ```
+    
+    Useful for:
+    - Testing
+    - Development with frequent schema changes
+    - Applications using external connection pooling
+  </Step>
+  
+  <Step title="StaticPool">
+    Single connection for all requests. Useful for SQLite in-memory databases.
+    
+    ```python
+    from sqlalchemy.pool import StaticPool
+    
+    engine = create_engine(
+        "sqlite:///:memory:",
+        poolclass=StaticPool
+    )
+    ```
+  </Step>
+  
+  <Step title="SingletonThreadPool">
+    Maintains one connection per thread.
+    
+    ```python
+    from sqlalchemy.pool import SingletonThreadPool
+    
+    engine = create_engine(
+        "sqlite:///mydb.db",
+        poolclass=SingletonThreadPool
+    )
+    ```
+  </Step>
+</Steps>
+
+### Pool Configuration
+
+<ParamField path="pool_size" type="int" default="5">
+  Number of connections to keep open in the pool.
+</ParamField>
+
+<ParamField path="max_overflow" type="int" default="10">
+  Maximum connections that can be created beyond `pool_size`. Total connections = `pool_size` + `max_overflow`.
+</ParamField>
+
+<ParamField path="pool_timeout" type="float" default="30">
+  Seconds to wait for a connection before raising `TimeoutError`.
+</ParamField>
+
+<ParamField path="pool_recycle" type="int" default="-1">
+  Recycle connections after this many seconds. Set to 3600 (1 hour) for MySQL to avoid "MySQL server has gone away" errors.
+  
+  ```python
+  engine = create_engine("mysql://...", pool_recycle=3600)
+  ```
+</ParamField>
+
+<ParamField path="pool_pre_ping" type="bool" default="False">
+  Test connections for liveness before using them. Adds slight overhead but prevents errors from stale connections.
+  
+  ```python
+  engine = create_engine("postgresql://...", pool_pre_ping=True)
+  ```
+</ParamField>
+
+<ParamField path="pool_use_lifo" type="bool" default="False">
+  Use last-in-first-out retrieval. Helps server-side timeouts close unused connections.
+</ParamField>
+
+<ParamField path="pool_reset_on_return" type="str" default="rollback">
+  How to reset connections when returned to the pool:
+  - `"rollback"` - Issue ROLLBACK (default)
+  - `"commit"` - Issue COMMIT
+  - `None` - No reset action
+</ParamField>
+
+### Pool Events
+
+Listen to pool events for monitoring and debugging:
+
+```python
+from sqlalchemy import event
+
+@event.listens_for(engine, "connect")
+def receive_connect(dbapi_conn, connection_record):
+    print("New connection created")
+
+@event.listens_for(engine, "checkout")
+def receive_checkout(dbapi_conn, connection_record, connection_proxy):
+    print("Connection checked out from pool")
+
+@event.listens_for(engine, "checkin")
+def receive_checkin(dbapi_conn, connection_record):
+    print("Connection returned to pool")
+```
+
+## Execution Options
+
+Modify connection behavior with execution options:
+
+```python
+with engine.connect() as conn:
+    # Set options on the connection
+    conn = conn.execution_options(
+        isolation_level="SERIALIZABLE",
+        stream_results=True,
+        max_row_buffer=1000
+    )
+    
+    result = conn.execute(text("SELECT * FROM large_table"))
+    for row in result:
+        print(row)
+```
+
+### Common Execution Options
+
+<ParamField path="isolation_level" type="str">
+  Transaction isolation level for this connection.
+</ParamField>
+
+<ParamField path="stream_results" type="bool" default="False">
+  Use server-side cursors for large result sets (PostgreSQL, MySQL).
+</ParamField>
+
+<ParamField path="max_row_buffer" type="int">
+  Buffer size when streaming results.
+</ParamField>
+
+<ParamField path="compiled_cache" type="dict | None">
+  Custom compiled statement cache, or `None` to disable caching.
+</ParamField>
+
+<ParamField path="schema_translate_map" type="dict">
+  Map schema names for multi-tenant applications:
+  
+  ```python
+  conn = conn.execution_options(
+      schema_translate_map={None: "tenant_1"}
+  )
+  ```
+</ParamField>
+
+## Working with Results
+
+### Fetching Rows
+
+```python
+with engine.connect() as conn:
+    result = conn.execute(text("SELECT * FROM users"))
+    
+    # Fetch one row
+    row = result.fetchone()
+    print(row.name, row.email)
+    
+    # Fetch all rows
+    all_rows = result.fetchall()
+    
+    # Fetch many rows
+    batch = result.fetchmany(size=100)
+    
+    # Iterate over results
+    for row in result:
+        print(row)
+```
+
+### Accessing Row Data
+
+```python
+result = conn.execute(text("SELECT id, name, email FROM users"))
+row = result.fetchone()
+
+# By column name
+print(row.name)
+
+# By index
+print(row[1])
+
+# As dictionary
+print(row._mapping["name"])
+
+# Convert to dict
+row_dict = dict(row._mapping)
+```
+
+### Scalar Results
+
+```python
+# Get a single value
+from sqlalchemy import select
+
+result = conn.execute(text("SELECT COUNT(*) FROM users"))
+count = result.scalar()
+print(f"Total users: {count}")
+
+# Using scalar_one() - raises if not exactly one result
+result = conn.execute(text("SELECT name FROM users WHERE id = 1"))
+name = result.scalar_one()
+```
+
+## Connection Properties and Methods
+
+### Key Properties
+
+- `conn.closed` - Whether the connection is closed
+- `conn.invalidated` - Whether the connection is invalidated
+- `conn.dialect` - The Dialect instance
+- `conn.engine` - The parent Engine
+
+### Key Methods
+
+```python
+# Get current isolation level
+level = conn.get_isolation_level()
+
+# Get nested transaction level
+depth = conn.get_nested_transaction()
+
+# Test if in transaction
+if conn.in_transaction():
+    print("Transaction active")
+
+# Invalidate the connection
+conn.invalidate()
+
+# Close the connection
+conn.close()
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Always Use Context Managers">
+    Ensures connections are returned to the pool:
+    
+    ```python
+    # Good
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT 1"))
+    
+    # Avoid
+    conn = engine.connect()
+    result = conn.execute(text("SELECT 1"))
+    conn.close()
+    ```
+  </Step>
+  
+  <Step title="Use engine.begin() for Transactions">
+    Simplifies transaction management:
+    
+    ```python
+    # Good
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO users (name) VALUES ('Alice')"))
+    # Auto-commit
+    
+    # More verbose
+    with engine.connect() as conn:
+        with conn.begin():
+            conn.execute(text("INSERT INTO users (name) VALUES ('Alice')"))
+    ```
+  </Step>
+  
+  <Step title="Configure Pool for Your Workload">
+    ```python
+    # Web application with moderate concurrency
+    engine = create_engine(
+        "postgresql://...",
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=3600,
+        pool_pre_ping=True
+    )
+    ```
+  </Step>
+  
+  <Step title="Handle Disconnects Gracefully">
+    ```python
+    from sqlalchemy.exc import DBAPIError
+    
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1"))
+    except DBAPIError as e:
+        if e.connection_invalidated:
+            print("Connection was invalidated, retry...")
+        raise
+    ```
+  </Step>
+  
+  <Step title="Use Appropriate Isolation Levels">
+    Choose based on your consistency requirements:
+    
+    ```python
+    # Financial transaction - use SERIALIZABLE
+    with engine.connect().execution_options(
+        isolation_level="SERIALIZABLE"
+    ) as conn:
+        with conn.begin():
+            # Transfer money between accounts
+            pass
+    
+    # Read-only report - use READ UNCOMMITTED for performance
+    with engine.connect().execution_options(
+        isolation_level="READ UNCOMMITTED"
+    ) as conn:
+        # Generate report
+        pass
+    ```
+  </Step>
+</Steps>
+
+## See Also
+
+- [Engine Architecture](/concepts/engine) - Creating and configuring engines
+- [MetaData System](/concepts/metadata) - Organizing database schema
+- [Schema Definition](/concepts/schema) - Defining tables and columns

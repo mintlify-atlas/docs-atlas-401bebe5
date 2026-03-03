@@ -1,0 +1,462 @@
+---
+title: 'SQLAlchemy Unified Tutorial'
+description: 'Learn SQLAlchemy Core and ORM fundamentals through an integrated approach'
+---
+
+## Introduction
+
+This tutorial introduces SQLAlchemy's Core and ORM components in a unified way. By the end, you'll understand how to:
+
+- Establish database connections
+- Define table structures (Core) and ORM models
+- Execute basic SQL operations
+- Work with results and transactions
+
+<Note>
+SQLAlchemy 2.0 features unified querying where ORM uses the same `select()` construct as Core, making learning both approaches more straightforward.
+</Note>
+
+## Setting Up the Engine
+
+The `Engine` is the starting point for any SQLAlchemy application, managing database connections.
+
+```python
+from sqlalchemy import create_engine
+
+# Create an in-memory SQLite database
+engine = create_engine("sqlite://", echo=True)
+
+# For PostgreSQL:
+# engine = create_engine("postgresql+psycopg2://user:password@localhost/dbname")
+
+# For MySQL:
+# engine = create_engine("mysql+pymysql://user:password@localhost/dbname")
+```
+
+<Tip>
+Set `echo=True` during development to see the SQL statements SQLAlchemy generates.
+</Tip>
+
+## Defining Table Metadata (Core)
+
+With Core, you define table structures explicitly:
+
+```python
+from sqlalchemy import Table, Column, Integer, String, ForeignKey, MetaData
+
+metadata_obj = MetaData()
+
+user_table = Table(
+    "user_account",
+    metadata_obj,
+    Column("id", Integer, primary_key=True),
+    Column("name", String(30), nullable=False),
+    Column("fullname", String(100)),
+)
+
+address_table = Table(
+    "address",
+    metadata_obj,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer, ForeignKey("user_account.id"), nullable=False),
+    Column("email_address", String(100), nullable=False),
+)
+
+# Create all tables
+metadata_obj.create_all(engine)
+```
+
+## Defining ORM Models (Declarative)
+
+The ORM approach uses Python classes with type annotations:
+
+```python
+from typing import List, Optional
+from sqlalchemy import String, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+class Base(DeclarativeBase):
+    pass
+
+class User(Base):
+    __tablename__ = "user_account"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(30))
+    fullname: Mapped[Optional[str]] = mapped_column(String(100))
+    
+    addresses: Mapped[List["Address"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    
+    def __repr__(self) -> str:
+        return f"User(id={self.id!r}, name={self.name!r}, fullname={self.fullname!r})"
+
+class Address(Base):
+    __tablename__ = "address"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_account.id"))
+    email_address: Mapped[str] = mapped_column(String(100))
+    
+    user: Mapped["User"] = relationship(back_populates="addresses")
+    
+    def __repr__(self) -> str:
+        return f"Address(id={self.id!r}, email_address={self.email_address!r})"
+
+# Create all tables
+Base.metadata.create_all(engine)
+```
+
+<Tip>
+Use `Mapped[Type]` for type hints - this provides IDE autocomplete and helps SQLAlchemy infer column types.
+</Tip>
+
+## Working with Connections (Core)
+
+Core uses `Connection` objects for executing SQL:
+
+```python
+from sqlalchemy import text
+
+with engine.connect() as conn:
+    # Execute raw SQL
+    result = conn.execute(text("SELECT 'hello world'"))
+    print(result.all())
+    
+    # Commit is required for DML
+    conn.execute(text("INSERT INTO user_account (name, fullname) VALUES (:name, :fullname)"),
+                [{"name": "spongebob", "fullname": "Spongebob Squarepants"},
+                 {"name": "sandy", "fullname": "Sandy Cheeks"}])
+    conn.commit()
+```
+
+## Working with Sessions (ORM)
+
+The ORM uses `Session` for object persistence:
+
+```python
+from sqlalchemy.orm import Session
+
+with Session(engine) as session:
+    # Create new objects
+    spongebob = User(
+        name="spongebob",
+        fullname="Spongebob Squarepants",
+        addresses=[Address(email_address="spongebob@sqlalchemy.org")]
+    )
+    sandy = User(
+        name="sandy",
+        fullname="Sandy Cheeks",
+        addresses=[
+            Address(email_address="sandy@sqlalchemy.org"),
+            Address(email_address="sandy@squirrelpower.org")
+        ]
+    )
+    
+    # Add to session
+    session.add_all([spongebob, sandy])
+    
+    # Commit transaction
+    session.commit()
+```
+
+<Note>
+The `Session` manages a "Unit of Work" - it tracks changes to objects and flushes them to the database when you commit.
+</Note>
+
+## Selecting Data (Core)
+
+Use the `select()` construct for queries:
+
+```python
+from sqlalchemy import select
+
+with engine.connect() as conn:
+    # Select all columns
+    stmt = select(user_table)
+    result = conn.execute(stmt)
+    for row in result:
+        print(f"{row.id}: {row.name} - {row.fullname}")
+    
+    # Select specific columns
+    stmt = select(user_table.c.name, user_table.c.fullname)
+    result = conn.execute(stmt)
+    for row in result:
+        print(f"{row.name} - {row.fullname}")
+    
+    # With WHERE clause
+    stmt = select(user_table).where(user_table.c.name == "spongebob")
+    result = conn.execute(stmt)
+    print(result.one())
+```
+
+## Selecting Data (ORM)
+
+The ORM uses the same `select()` construct but returns ORM objects:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+with Session(engine) as session:
+    # Select all User objects
+    stmt = select(User)
+    for user in session.scalars(stmt):
+        print(user)
+    
+    # With WHERE clause using ORM attributes
+    stmt = select(User).where(User.name == "spongebob")
+    spongebob = session.scalars(stmt).one()
+    print(f"Found: {spongebob.name}")
+    
+    # Select specific ORM attributes
+    stmt = select(User.name, User.fullname)
+    for row in session.execute(stmt):
+        print(f"{row.name} - {row.fullname}")
+```
+
+<Tip>
+Use `session.scalars()` when selecting full ORM entities. Use `session.execute()` when selecting specific columns.
+</Tip>
+
+## Filtering and Ordering
+
+<Tabs>
+  <Tab title="Core">
+    ```python
+    from sqlalchemy import select, and_, or_
+    
+    with engine.connect() as conn:
+        # WHERE with multiple conditions
+        stmt = select(user_table).where(
+            and_(
+                user_table.c.name.like('s%'),
+                user_table.c.fullname.isnot(None)
+            )
+        )
+        
+        # ORDER BY
+        stmt = select(user_table).order_by(user_table.c.name.desc())
+        
+        # LIMIT
+        stmt = select(user_table).limit(5)
+        
+        result = conn.execute(stmt)
+        for row in result:
+            print(row)
+    ```
+  </Tab>
+  
+  <Tab title="ORM">
+    ```python
+    from sqlalchemy import select, and_, or_
+    from sqlalchemy.orm import Session
+    
+    with Session(engine) as session:
+        # WHERE with multiple conditions
+        stmt = select(User).where(
+            and_(
+                User.name.like('s%'),
+                User.fullname.isnot(None)
+            )
+        )
+        
+        # Using filter_by for equality
+        stmt = select(User).filter_by(name="spongebob")
+        
+        # ORDER BY
+        stmt = select(User).order_by(User.name.desc())
+        
+        # LIMIT
+        stmt = select(User).limit(5)
+        
+        for user in session.scalars(stmt):
+            print(user)
+    ```
+  </Tab>
+</Tabs>
+
+## Joins
+
+Joining tables is fundamental for relational queries:
+
+<Tabs>
+  <Tab title="Core">
+    ```python
+    from sqlalchemy import select
+    
+    with engine.connect() as conn:
+        # Explicit JOIN
+        stmt = select(user_table, address_table).join(
+            address_table,
+            user_table.c.id == address_table.c.user_id
+        )
+        
+        # Using join_from for clarity
+        stmt = select(user_table.c.name, address_table.c.email_address).join_from(
+            user_table, address_table
+        )
+        
+        result = conn.execute(stmt)
+        for row in result:
+            print(row)
+    ```
+  </Tab>
+  
+  <Tab title="ORM">
+    ```python
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+    
+    with Session(engine) as session:
+        # Join using relationship
+        stmt = select(User).join(User.addresses)
+        
+        # Filter on joined table
+        stmt = select(User).join(User.addresses).where(
+            Address.email_address.like('%sqlalchemy.org')
+        )
+        
+        # Select from both entities
+        stmt = select(User, Address).join(User.addresses)
+        
+        for user, address in session.execute(stmt):
+            print(f"{user.name}: {address.email_address}")
+    ```
+  </Tab>
+</Tabs>
+
+## Complete Example: Building a Blog System
+
+Here's a complete example combining everything:
+
+```python
+from typing import List, Optional
+from datetime import datetime
+from sqlalchemy import create_engine, String, Text, DateTime, ForeignKey, func, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+
+class Base(DeclarativeBase):
+    pass
+
+class BlogPost(Base):
+    __tablename__ = "blog_post"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(100))
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    author_id: Mapped[int] = mapped_column(ForeignKey("author.id"))
+    
+    author: Mapped["Author"] = relationship(back_populates="posts")
+    comments: Mapped[List["Comment"]] = relationship(
+        back_populates="post", cascade="all, delete-orphan"
+    )
+
+class Author(Base):
+    __tablename__ = "author"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    email: Mapped[str] = mapped_column(String(100))
+    
+    posts: Mapped[List["BlogPost"]] = relationship(back_populates="author")
+
+class Comment(Base):
+    __tablename__ = "comment"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    content: Mapped[str] = mapped_column(Text)
+    post_id: Mapped[int] = mapped_column(ForeignKey("blog_post.id"))
+    commenter_name: Mapped[str] = mapped_column(String(50))
+    
+    post: Mapped["BlogPost"] = relationship(back_populates="comments")
+
+# Setup
+engine = create_engine("sqlite://", echo=True)
+Base.metadata.create_all(engine)
+
+# Create data
+with Session(engine) as session:
+    author = Author(name="Alice", email="alice@example.com")
+    
+    post1 = BlogPost(
+        title="SQLAlchemy 2.0 Released!",
+        content="This is great news...",
+        author=author,
+        comments=[
+            Comment(content="Awesome!", commenter_name="Bob"),
+            Comment(content="Can't wait to try it", commenter_name="Charlie")
+        ]
+    )
+    
+    post2 = BlogPost(
+        title="Getting Started with ORM",
+        content="Here's how to begin...",
+        author=author
+    )
+    
+    session.add_all([post1, post2])
+    session.commit()
+
+# Query data
+with Session(engine) as session:
+    # Find all posts by author
+    stmt = select(BlogPost).join(BlogPost.author).where(Author.name == "Alice")
+    for post in session.scalars(stmt):
+        print(f"Post: {post.title}")
+        print(f"Author: {post.author.name}")
+        print(f"Comments: {len(post.comments)}")
+```
+
+## Understanding Transactions
+
+<Warning>
+Always use context managers (`with` statements) to ensure proper resource cleanup and transaction handling.
+</Warning>
+
+Transactions in SQLAlchemy:
+
+```python
+from sqlalchemy.orm import Session
+
+# Auto-commit on context exit
+with Session(engine) as session:
+    session.add(User(name="patrick", fullname="Patrick Star"))
+    session.commit()  # Explicit commit
+    # session is automatically closed here
+
+# Manual transaction control
+with Session(engine) as session:
+    session.begin()
+    try:
+        session.add(User(name="squidward", fullname="Squidward Tentacles"))
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+```
+
+## Next Steps
+
+Now that you understand the fundamentals:
+
+<CardGroup cols={2}>
+  <Card title="Data Manipulation" icon="database" href="/tutorials/orm-data-manipulation">
+    Learn advanced insert, update, and delete patterns
+  </Card>
+  
+  <Card title="Advanced Queries" icon="magnifying-glass" href="/tutorials/orm-queries">
+    Master complex queries with aggregations and subqueries
+  </Card>
+</CardGroup>
+
+## Key Takeaways
+
+- The `Engine` manages database connections
+- Core uses explicit `Table` definitions; ORM uses declarative classes
+- Both Core and ORM use the same `select()` construct in SQLAlchemy 2.0
+- Use `Connection` for Core, `Session` for ORM
+- Always use context managers for proper resource management
+- The `Mapped[Type]` annotation provides type safety and IDE support

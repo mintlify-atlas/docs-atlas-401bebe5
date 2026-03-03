@@ -1,0 +1,791 @@
+---
+title: Loading Techniques
+description: Lazy loading, eager loading strategies (joinedload, selectinload), and performance optimization for ORM relationships
+---
+
+Efficient relationship loading is critical for ORM performance. SQLAlchemy provides multiple loading strategies to control when and how related objects are loaded from the database.
+
+## Overview
+
+When you access a relationship on an ORM object, SQLAlchemy needs to load the related data. The loading strategy determines when and how this happens:
+
+- **Lazy Loading**: Load related data on-demand when accessed
+- **Eager Loading**: Load related data immediately with the parent query
+  - **Joined Loading**: Use SQL JOINs
+  - **Select IN Loading**: Use separate SELECT with IN clause
+  - **Subquery Loading**: Use correlated subquery
+
+<Warning>
+**N+1 Query Problem**: Lazy loading can cause performance issues when accessing relationships in loops, issuing one query per parent object. Use eager loading to prevent this.
+</Warning>
+
+## Lazy Loading
+
+Lazy loading is the default behavior. Related objects are loaded only when the relationship attribute is accessed.
+
+### How Lazy Loading Works
+
+<Steps>
+
+<Step title="Load parent objects">
+
+```python
+from sqlalchemy import select
+from models import User
+
+# Initial query loads only User objects
+stmt = select(User)
+users = session.scalars(stmt).all()
+# SQL: SELECT users.id, users.name, users.email FROM users
+```
+
+</Step>
+
+<Step title="Access relationship triggers additional query">
+
+```python
+# Each access to .addresses triggers a new query
+for user in users:
+    print(user.addresses)  # Separate SELECT for each user!
+    # SQL (for each user): 
+    # SELECT addresses.* FROM addresses WHERE addresses.user_id = ?
+```
+
+This creates N+1 queries: 1 for users + N for each user's addresses.
+
+</Step>
+
+</Steps>
+
+### Explicit Lazy Loading
+
+You can explicitly configure lazy loading using the `lazyload()` option:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import lazyload
+from models import User
+
+stmt = select(User).options(lazyload(User.addresses))
+users = session.scalars(stmt).all()
+
+# Addresses will be lazy-loaded when accessed
+for user in users:
+    print(user.addresses)  # Triggers SELECT for this user
+```
+
+### When to Use Lazy Loading
+
+<Tabs>
+  <Tab title="Good Use Cases">
+
+✅ **Single object access**
+```python
+# Loading one user - lazy loading is fine
+user = session.get(User, 1)
+print(user.addresses)  # Only 1 additional query
+```
+
+✅ **Selective relationship access**
+```python
+users = session.scalars(select(User)).all()
+
+# Only access relationship for some users
+for user in users:
+    if user.is_premium:
+        print(user.addresses)  # Only loads when needed
+```
+
+✅ **Large datasets where relationships rarely accessed**
+```python
+# Loading 10,000 users, but only viewing addresses for a few
+users = session.scalars(select(User).limit(10000)).all()
+```
+
+  </Tab>
+  <Tab title="Bad Use Cases">
+
+❌ **Loop access (N+1 problem)**
+```python
+# BAD: Creates 101 queries (1 + 100)
+users = session.scalars(select(User).limit(100)).all()
+for user in users:
+    print(user.addresses)  # New query each iteration!
+```
+
+❌ **Multiple relationship access**
+```python
+# BAD: Queries multiply quickly
+users = session.scalars(select(User)).all()
+for user in users:
+    print(user.addresses)   # N queries
+    print(user.orders)      # N more queries
+    print(user.preferences) # N more queries
+```
+
+  </Tab>
+</Tabs>
+
+## Joined Eager Loading
+
+Joined loading uses SQL JOINs to load parent and related objects in a single query.
+
+### Basic Joined Loading
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+from models import User
+
+# Load users and their addresses in one query
+stmt = select(User).options(joinedload(User.addresses))
+users = session.scalars(stmt).all()
+
+# SQL: SELECT users.*, addresses.* 
+#      FROM users LEFT OUTER JOIN addresses ON users.id = addresses.user_id
+
+# No additional queries when accessing addresses
+for user in users:
+    print(user.addresses)  # Already loaded!
+```
+
+### Inner vs Outer Joins
+
+<CodeGroup>
+
+```python Outer Join (Default)
+from sqlalchemy.orm import joinedload
+
+# LEFT OUTER JOIN - includes users with no addresses
+stmt = select(User).options(joinedload(User.addresses))
+
+# SQL: FROM users LEFT OUTER JOIN addresses ...
+```
+
+```python Inner Join
+from sqlalchemy.orm import joinedload
+
+# INNER JOIN - only users with at least one address
+stmt = select(User).options(joinedload(User.addresses, innerjoin=True))
+
+# SQL: FROM users JOIN addresses ...
+```
+
+```python Unnested Join
+# INNER unless chained to outer join
+stmt = select(User).options(
+    joinedload(User.orders, innerjoin="unnested")
+)
+
+# Renders as INNER, but becomes OUTER if linked to a LEFT JOIN
+```
+
+</CodeGroup>
+
+### Chaining Joined Loads
+
+Load multiple levels of relationships:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+from models import User, Order, OrderItem
+
+# Load User -> Orders -> OrderItems
+stmt = select(User).options(
+    joinedload(User.orders).joinedload(Order.items)
+)
+
+# SQL includes two JOINs:
+# FROM users 
+# LEFT OUTER JOIN orders ON users.id = orders.user_id
+# LEFT OUTER JOIN order_items ON orders.id = order_items.order_id
+
+users = session.scalars(stmt).all()
+for user in users:
+    for order in user.orders:
+        print(order.items)  # All loaded, no additional queries
+```
+
+### Multiple Relationships
+
+```python
+from sqlalchemy.orm import joinedload
+
+# Load multiple relationships on same object
+stmt = select(User).options(
+    joinedload(User.addresses),
+    joinedload(User.orders),
+    joinedload(User.preferences)
+)
+
+# Creates multiple LEFT OUTER JOINs
+users = session.scalars(stmt).all()
+```
+
+<Warning>
+**Cartesian Product Risk**: Joining multiple one-to-many relationships can create large result sets. A user with 10 addresses and 10 orders creates 100 rows (10 × 10). Consider using `selectinload()` instead.
+</Warning>
+
+### When to Use Joined Loading
+
+**Best for:**
+- ✅ Many-to-one relationships (e.g., Address.user)
+- ✅ One-to-one relationships
+- ✅ Small one-to-many collections
+- ✅ When you need to filter on related objects
+
+**Avoid for:**
+- ❌ Multiple large one-to-many relationships (cartesian explosion)
+- ❌ Very large collections
+- ❌ Deeply nested relationships
+
+## Select IN Loading
+
+Select IN loading issues a separate SELECT statement using an IN clause with the primary keys from the parent query.
+
+### Basic Select IN Loading
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from models import User
+
+stmt = select(User).options(selectinload(User.addresses))
+users = session.scalars(stmt).all()
+
+# SQL Query 1: SELECT users.* FROM users
+# SQL Query 2: SELECT addresses.* FROM addresses 
+#              WHERE addresses.user_id IN (1, 2, 3, 4, 5, ...)
+
+for user in users:
+    print(user.addresses)  # Already loaded!
+```
+
+### How It Works
+
+<Steps>
+
+<Step title="Load parent objects">
+
+First query loads the parent entities:
+
+```sql
+SELECT users.id, users.name, users.email FROM users
+```
+
+</Step>
+
+<Step title="Collect primary keys">
+
+SQLAlchemy collects all parent primary keys: `[1, 2, 3, 4, 5, ...]`
+
+</Step>
+
+<Step title="Load related objects">
+
+Second query loads all related objects at once:
+
+```sql
+SELECT addresses.* FROM addresses WHERE addresses.user_id IN (1, 2, 3, 4, 5, ...)
+```
+
+</Step>
+
+<Step title="Associate in memory">
+
+SQLAlchemy associates each address with its parent user in memory.
+
+</Step>
+
+</Steps>
+
+### Chaining Select IN Loads
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from models import User, Order, OrderItem
+
+stmt = select(User).options(
+    selectinload(User.orders).selectinload(Order.items)
+)
+
+users = session.scalars(stmt).all()
+
+# SQL Query 1: SELECT users.* FROM users
+# SQL Query 2: SELECT orders.* FROM orders WHERE orders.user_id IN (...)
+# SQL Query 3: SELECT order_items.* FROM order_items WHERE order_items.order_id IN (...)
+```
+
+### Recursion Depth
+
+For self-referential relationships, automatically load multiple levels:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from models import TreeNode
+
+# Load tree structure 3 levels deep
+stmt = select(TreeNode).options(
+    selectinload(TreeNode.children, recursion_depth=3)
+)
+
+roots = session.scalars(stmt.where(TreeNode.parent_id.is_(None))).all()
+
+# Children, grandchildren, and great-grandchildren all loaded
+for root in roots:
+    for child in root.children:
+        for grandchild in child.children:
+            print(grandchild.children)  # All loaded!
+```
+
+<Note>
+`recursion_depth` currently only supports self-referential relationships. It's an alpha feature in SQLAlchemy 2.0.
+</Note>
+
+### When to Use Select IN Loading
+
+**Best for:**
+- ✅ One-to-many relationships (default choice)
+- ✅ Many-to-many relationships
+- ✅ Loading multiple collections on the same parent
+- ✅ Large collections
+- ✅ Most general-purpose eager loading needs
+
+**Advantages:**
+- No cartesian product issues
+- Predictable query count (1 + number of relationships)
+- Works well with large result sets
+
+**SQLAlchemy Recommendation**: `selectinload()` is the recommended default eager loading strategy for collections.
+
+## Subquery Eager Loading
+
+Subquery loading uses a correlated subquery to load related objects.
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import subqueryload
+from models import User
+
+stmt = select(User).options(subqueryload(User.addresses))
+users = session.scalars(stmt).all()
+
+# SQL Query 1: SELECT users.* FROM users
+# SQL Query 2: SELECT addresses.*, anon_1.users_id FROM addresses
+#              JOIN (SELECT users.id AS users_id FROM users) AS anon_1
+#              ON anon_1.users_id = addresses.user_id
+```
+
+<Warning>
+`subqueryload()` is **not recommended** for new code. Use `selectinload()` instead. Subquery loading has compatibility issues with queries that use LIMIT/OFFSET and may require the original query to be run twice.
+</Warning>
+
+## Preventing Lazy Loads with raiseload()
+
+Use `raiseload()` to ensure all required data is eagerly loaded and prevent accidental N+1 queries.
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload, raiseload
+from models import User
+
+# Eager load addresses, but raise error if orders are accessed
+stmt = select(User).options(
+    selectinload(User.addresses),
+    raiseload(User.orders)
+)
+
+users = session.scalars(stmt).all()
+
+for user in users:
+    print(user.addresses)  # OK - was eagerly loaded
+    print(user.orders)     # Raises InvalidRequestError!
+```
+
+### Raiseload with sql_only
+
+```python
+from sqlalchemy.orm import raiseload
+
+# Only raise if SQL would be emitted, not for identity map checks
+stmt = select(User).options(
+    raiseload(User.addresses, sql_only=True)
+)
+
+users = session.scalars(stmt).all()
+
+# If address is already in identity map, this works
+# Otherwise raises error
+print(users[0].addresses)
+```
+
+## Immediate Loading
+
+Immediate loading is similar to lazy loading but fires immediately instead of waiting for attribute access.
+
+```python
+from sqlalchemy import select  
+from sqlalchemy.orm import immediateload
+from models import User
+
+stmt = select(User).options(immediateload(User.addresses))
+users = session.scalars(stmt).all()  # Addresses loaded here
+
+# SQL Query 1: SELECT users.* FROM users
+# SQL Queries 2-N: SELECT addresses.* FROM addresses WHERE user_id = ? (for each user)
+
+for user in users:
+    print(user.addresses)  # Already loaded
+```
+
+<Note>
+`immediateload()` is superseded by `selectinload()`, which is more efficient. Use `selectinload()` for new code.
+</Note>
+
+## Default Loading Strategy
+
+Set the default loading strategy on the relationship definition:
+
+<CodeGroup>
+
+```python Lazy (Default)
+from sqlalchemy.orm import relationship
+
+class User(Base):
+    __tablename__ = "users"
+    addresses = relationship("Address", lazy="select")  # Default
+```
+
+```python Joined
+class User(Base):
+    __tablename__ = "users"
+    addresses = relationship("Address", lazy="joined")
+```
+
+```python Select IN
+class User(Base):
+    __tablename__ = "users"
+    addresses = relationship("Address", lazy="selectin")
+```
+
+```python Raise on Access
+class User(Base):
+    __tablename__ = "users"
+    addresses = relationship("Address", lazy="raise")
+```
+
+</CodeGroup>
+
+### Overriding Default Strategy
+
+Query-time options override relationship defaults:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import lazyload, joinedload
+
+class User(Base):
+    addresses = relationship("Address", lazy="joined")  # Default is joined
+
+# Override to use lazy loading
+stmt = select(User).options(lazyload(User.addresses))
+```
+
+## Loading Multiple Levels
+
+Control loading for nested relationships:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload, joinedload, lazyload
+from models import User, Order, OrderItem, Product
+
+stmt = select(User).options(
+    # User -> Orders: select IN
+    selectinload(User.orders)
+    # Order -> Items: joined
+    .joinedload(Order.items)
+    # Item -> Product: lazy (don't load)
+    .lazyload(OrderItem.product)
+)
+
+users = session.scalars(stmt).all()
+```
+
+### defaultload() for Intermediate Steps
+
+When you don't want to change an intermediate relationship's loading:
+
+```python
+from sqlalchemy.orm import defaultload, joinedload
+
+# Don't change User.orders loading, but eager load Order.items
+stmt = select(User).options(
+    defaultload(User.orders).joinedload(Order.items)
+)
+```
+
+## contains_eager() for Explicit Joins
+
+When you manually JOIN to a related table, use `contains_eager()` to tell SQLAlchemy to populate the relationship from the join:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import contains_eager
+from models import User, Address
+
+# Manual join with eager population
+stmt = (
+    select(User)
+    .join(User.addresses)
+    .where(Address.email_address.like("%@gmail.com"))
+    .options(contains_eager(User.addresses))
+)
+
+users = session.scalars(stmt).unique().all()
+
+# User.addresses is populated from the JOIN
+for user in users:
+    print(user.addresses)  # Already loaded from explicit JOIN
+```
+
+<Warning>
+When using `contains_eager()` with one-to-many joins, use `.unique()` on the result to deduplicate parent objects.
+</Warning>
+
+## Performance Comparison
+
+Choosing the right loading strategy significantly impacts performance.
+
+<Tabs>
+  <Tab title="Query Count">
+
+| Strategy | Parent Query | Related Queries | Total |
+|----------|--------------|-----------------|-------|
+| Lazy | 1 | N (one per parent) | 1 + N |
+| Joined | 1 | 0 | 1 |
+| Select IN | 1 | 1 per relationship | 1 + R |
+| Subquery | 1 | 1 per relationship | 1 + R |
+| Immediate | 1 | N | 1 + N |
+
+**Example with 100 users:**
+
+- Lazy: 101 queries
+- Joined: 1 query
+- Select IN: 2 queries
+- Subquery: 2 queries
+- Immediate: 101 queries
+
+</Tab>
+  <Tab title="Result Set Size">
+
+**Joined Loading Cartesian Product:**
+
+```python
+# User has 10 addresses and 10 orders
+# Joined loading both creates 100 rows (10 × 10)
+stmt = select(User).options(
+    joinedload(User.addresses),
+    joinedload(User.orders)
+)
+# Returns 100 rows for a single user!
+```
+
+**Select IN Loading - No Cartesian:**
+
+```python
+# Same user: 1 user row + 10 address rows + 10 order rows = 21 rows
+stmt = select(User).options(
+    selectinload(User.addresses),
+    selectinload(User.orders)  
+)
+# Much more efficient!
+```
+
+  </Tab>
+  <Tab title="Recommendations">
+
+**General Guidelines:**
+
+1. **Many-to-one / one-to-one**: Use `joinedload()`
+   ```python
+   select(Address).options(joinedload(Address.user))
+   ```
+
+2. **One-to-many / many-to-many**: Use `selectinload()`
+   ```python
+   select(User).options(selectinload(User.addresses))
+   ```
+
+3. **Multiple collections**: Use `selectinload()` for all
+   ```python
+   select(User).options(
+       selectinload(User.addresses),
+       selectinload(User.orders)
+   )
+   ```
+
+4. **Deep nesting**: Mix strategies
+   ```python
+   select(User).options(
+       selectinload(User.orders)
+       .joinedload(Order.shipping_address)
+   )
+   ```
+
+5. **Prevent N+1**: Use `raiseload()` in development
+   ```python
+   select(User).options(raiseload("*"))
+   ```
+
+  </Tab>
+</Tabs>
+
+## Advanced Loading Techniques
+
+### Loading Specific Columns on Related Objects
+
+```python
+from sqlalchemy.orm import selectinload, load_only
+
+# Load users with addresses, but only load email from addresses
+stmt = select(User).options(
+    selectinload(User.addresses).load_only(
+        Address.email_address,
+        Address.id  # Always include primary key
+    )
+)
+```
+
+### Conditional Loading with with_loader_criteria()
+
+```python
+from sqlalchemy.orm import with_loader_criteria, selectinload
+
+# Only load active addresses
+stmt = select(User).options(
+    selectinload(User.addresses),
+    with_loader_criteria(Address, Address.is_active == True)
+)
+
+users = session.scalars(stmt).all()
+# user.addresses only contains active addresses
+```
+
+### Polymorphic Loading
+
+For joined table inheritance, control loading of subclasses:
+
+```python
+from sqlalchemy.orm import selectin_polymorphic
+
+stmt = select(Employee).options(
+    selectin_polymorphic(Employee, [Manager, Engineer])
+)
+```
+
+## Debugging Loading Issues
+
+### Enable SQL Echo
+
+```python
+from sqlalchemy import create_engine
+
+# See all SQL queries
+engine = create_engine("sqlite:///example.db", echo=True)
+```
+
+### Detect N+1 Queries
+
+```python
+import logging
+
+# Log all SQL statements
+logging.basicConfig()
+logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+
+# Run your code and watch for repeated queries
+users = session.scalars(select(User)).all()
+for user in users:
+    print(user.addresses)  # You'll see individual SELECTs in logs
+```
+
+### Use raiseload() in Development
+
+```python
+from sqlalchemy.orm import raiseload
+
+# Raise error on any lazy load
+stmt = select(User).options(raiseload("*"))
+
+users = session.scalars(stmt).all()
+for user in users:
+    print(user.addresses)  # InvalidRequestError - tells you to add eager loading!
+```
+
+## Best Practices
+
+<Steps>
+
+<Step title="Default to selectinload()">
+
+For collections, `selectinload()` is the safest, most efficient choice:
+
+```python
+stmt = select(User).options(selectinload(User.addresses))
+```
+
+</Step>
+
+<Step title="Use joinedload() for single objects">
+
+For many-to-one relationships:
+
+```python  
+stmt = select(Address).options(joinedload(Address.user))
+```
+
+</Step>
+
+<Step title="Avoid loading everything">
+
+Only eager load what you'll actually use:
+
+```python
+# Bad - loads everything
+stmt = select(User).options(
+    selectinload(User.addresses),
+    selectinload(User.orders),
+    selectinload(User.preferences),
+    selectinload(User.activity_log)  # Probably don't need this!
+)
+
+# Better - only load what's needed
+stmt = select(User).options(selectinload(User.addresses))
+```
+
+</Step>
+
+<Step title="Use raiseload() to catch mistakes">
+
+In development/testing:
+
+```python
+stmt = select(User).options(
+    selectinload(User.addresses),
+    raiseload("*")  # Raise on any other lazy loads
+)
+```
+
+</Step>
+
+</Steps>
+
+## See Also
+
+- [Query Guide](/orm/query-guide) - Building SELECT statements
+- [Queryable Attributes](/orm/queryable-attributes) - Working with mapped attributes
+- [SQLAlchemy Relationship Loading Techniques](https://docs.sqlalchemy.org/en/20/orm/loading_relationships.html)

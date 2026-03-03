@@ -1,0 +1,453 @@
+---
+title: Query Guide
+description: Comprehensive guide to constructing ORM queries using select() statements
+---
+
+SQLAlchemy 2.0 introduces a unified approach to querying using the `select()` construct. This guide covers the core query APIs for filtering, ordering, and limiting results.
+
+## Overview
+
+The modern SQLAlchemy ORM uses `select()` for all query construction, replacing the legacy `Query` object. The `select()` function creates SQL SELECT statements that work seamlessly with the ORM.
+
+<Note>
+SQLAlchemy 2.0 style uses `select()` from `sqlalchemy` (or `sqlalchemy.future` in 1.4) instead of the legacy `session.query()` pattern.
+</Note>
+
+## Basic Query Construction
+
+<Steps>
+
+<Step title="Import select()">
+
+Import the `select()` function from SQLAlchemy:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+```
+
+</Step>
+
+<Step title="Create a basic select statement">
+
+Construct a query by passing entity classes to `select()`:
+
+```python
+from models import User
+
+# Select all users
+stmt = select(User)
+
+# Execute with session
+with Session(engine) as session:
+    users = session.scalars(stmt).all()
+```
+
+</Step>
+
+<Step title="Execute and retrieve results">
+
+Use `session.scalars()` for ORM objects or `session.execute()` for rows:
+
+```python
+# Get scalar ORM objects
+users = session.scalars(select(User)).all()
+
+# Get first result
+user = session.scalars(select(User)).first()
+
+# Get one result (raises if not exactly one)
+user = session.scalars(select(User)).one()
+```
+
+</Step>
+
+</Steps>
+
+## Filtering with where()
+
+The `where()` method adds WHERE clauses to filter query results.
+
+<Tabs>
+  <Tab title="2.0 Style">
+
+```python
+from sqlalchemy import select
+
+# Single condition
+stmt = select(User).where(User.name == "Alice")
+
+# Multiple conditions (AND)
+stmt = select(User).where(
+    User.age > 18,
+    User.is_active == True
+)
+
+# OR conditions
+from sqlalchemy import or_
+stmt = select(User).where(
+    or_(User.name == "Alice", User.name == "Bob")
+)
+
+# IN clause
+stmt = select(User).where(User.id.in_([1, 2, 3]))
+
+# LIKE pattern
+stmt = select(User).where(User.email.like("%@example.com"))
+```
+
+  </Tab>
+  <Tab title="Legacy Query">
+
+```python
+# Legacy 1.x style (deprecated)
+query = session.query(User).filter(User.name == "Alice")
+
+query = session.query(User).filter(
+    User.age > 18,
+    User.is_active == True
+)
+
+query = session.query(User).filter(
+    or_(User.name == "Alice", User.name == "Bob")
+)
+```
+
+<Warning>
+The `Query` object is legacy as of SQLAlchemy 2.0. Use `select()` for new code.
+</Warning>
+
+  </Tab>
+</Tabs>
+
+### Common Filter Operators
+
+| Operator | SQL Equivalent | Example |
+|----------|---------------|----------|
+| `==` | `=` | `User.name == "Alice"` |
+| `!=` | `!=` or `<>` | `User.name != "Bob"` |
+| `>`, `<`, `>=`, `<=` | Comparison | `User.age > 18` |
+| `.in_()` | `IN` | `User.id.in_([1, 2, 3])` |
+| `.like()` | `LIKE` | `User.name.like("A%")` |
+| `.ilike()` | `ILIKE` | `User.name.ilike("%alice%")` |
+| `.is_()` | `IS` | `User.deleted_at.is_(None)` |
+| `.is_not()` | `IS NOT` | `User.deleted_at.is_not(None)` |
+| `.contains()` | String contains | `User.description.contains("test")` |
+| `.startswith()` | String starts with | `User.name.startswith("A")` |
+
+## Ordering Results with order_by()
+
+Control the sort order of query results using `order_by()`.
+
+```python
+# Ascending order (default)
+stmt = select(User).order_by(User.name)
+
+# Descending order
+from sqlalchemy import desc
+stmt = select(User).order_by(desc(User.created_at))
+
+# Multiple columns
+stmt = select(User).order_by(
+    User.last_name,
+    User.first_name
+)
+
+# Mixed ascending/descending
+from sqlalchemy import asc
+stmt = select(User).order_by(
+    desc(User.priority),
+    asc(User.name)
+)
+
+# Nulls ordering
+from sqlalchemy import nulls_first, nulls_last
+stmt = select(User).order_by(
+    nulls_last(desc(User.last_login))
+)
+```
+
+<Note>
+Chaining multiple `order_by()` calls **replaces** the previous ordering. To add additional sort columns, pass them in a single call or use commas.
+</Note>
+
+## Limiting Results with limit() and offset()
+
+Control pagination and result set size using `limit()` and `offset()`.
+
+<CodeGroup>
+
+```python Basic Limit
+# Get first 10 users
+stmt = select(User).limit(10)
+
+users = session.scalars(stmt).all()
+```
+
+```python Pagination
+# Page-based pagination
+page = 2
+per_page = 20
+
+stmt = select(User).limit(per_page).offset((page - 1) * per_page)
+
+users = session.scalars(stmt).all()
+```
+
+```python Combined Example
+# Get second page of active users, sorted by creation date
+stmt = (
+    select(User)
+    .where(User.is_active == True)
+    .order_by(desc(User.created_at))
+    .limit(20)
+    .offset(20)
+)
+
+users = session.scalars(stmt).all()
+```
+
+</CodeGroup>
+
+<Warning>
+**Performance Consideration**: Always use `order_by()` with `limit()` and `offset()` to ensure consistent pagination results. Without explicit ordering, result order is undefined.
+</Warning>
+
+## Selecting Specific Columns
+
+You can select individual columns instead of entire entities.
+
+```python
+from sqlalchemy import select
+
+# Select specific columns
+stmt = select(User.name, User.email)
+
+for row in session.execute(stmt):
+    print(row.name, row.email)
+
+# Mix entities and columns
+stmt = select(User, User.created_at.label("signup_date"))
+
+for row in session.execute(stmt):
+    user = row.User
+    signup_date = row.signup_date
+```
+
+## Joining Tables
+
+Combine data from multiple tables using `join()` and `outerjoin()`.
+
+```python
+from sqlalchemy import select
+from models import User, Address
+
+# Inner join
+stmt = (
+    select(User)
+    .join(User.addresses)
+    .where(Address.email_address.like("%@example.com"))
+)
+
+# Explicit join condition
+stmt = select(User).join(Address, User.id == Address.user_id)
+
+# Left outer join
+stmt = select(User).outerjoin(User.addresses)
+
+# Multiple joins
+from models import Order, OrderItem
+stmt = (
+    select(User)
+    .join(User.orders)
+    .join(Order.order_items)
+    .where(OrderItem.price > 100)
+)
+```
+
+## Grouping and Aggregation
+
+Perform aggregate queries using `group_by()` and SQL functions.
+
+```python
+from sqlalchemy import func, select
+
+# Count users by status
+stmt = (
+    select(User.status, func.count(User.id).label("count"))
+    .group_by(User.status)
+)
+
+for row in session.execute(stmt):
+    print(f"{row.status}: {row.count}")
+
+# Having clause for filtering groups
+stmt = (
+    select(User.department, func.avg(User.salary))
+    .group_by(User.department)
+    .having(func.avg(User.salary) > 50000)
+)
+
+# Multiple aggregates
+stmt = select(
+    User.status,
+    func.count(User.id).label("total"),
+    func.avg(User.age).label("avg_age"),
+    func.max(User.created_at).label("newest")
+).group_by(User.status)
+```
+
+## Subqueries and CTEs
+
+Build complex queries with subqueries and Common Table Expressions.
+
+<Tabs>
+  <Tab title="Subqueries">
+
+```python
+from sqlalchemy import select
+
+# Scalar subquery
+avg_age = select(func.avg(User.age)).scalar_subquery()
+stmt = select(User).where(User.age > avg_age)
+
+# Subquery in FROM
+subq = select(User.department, func.count().label("cnt")).group_by(User.department).subquery()
+stmt = select(subq.c.department).where(subq.c.cnt > 10)
+```
+
+  </Tab>
+  <Tab title="CTEs">
+
+```python
+from sqlalchemy import select
+
+# Common Table Expression
+active_users = (
+    select(User.id, User.name)
+    .where(User.is_active == True)
+    .cte("active_users")
+)
+
+stmt = (
+    select(active_users.c.name, func.count(Order.id))
+    .join(Order, Order.user_id == active_users.c.id)
+    .group_by(active_users.c.name)
+)
+
+# Recursive CTE example
+tree = (
+    select(TreeNode.id, TreeNode.parent_id, TreeNode.name)
+    .where(TreeNode.parent_id.is_(None))
+    .cte(name="tree", recursive=True)
+)
+
+tree_alias = tree.alias()
+children = (
+    select(TreeNode.id, TreeNode.parent_id, TreeNode.name)
+    .join(tree_alias, TreeNode.parent_id == tree_alias.c.id)
+)
+
+tree = tree.union_all(children)
+stmt = select(tree)
+```
+
+  </Tab>
+</Tabs>
+
+## Distinct Results
+
+Eliminate duplicate rows from results.
+
+```python
+from sqlalchemy import select, distinct
+
+# Distinct entities
+stmt = select(User).distinct()
+
+# Distinct on specific columns
+stmt = select(User.department).distinct()
+
+# PostgreSQL DISTINCT ON
+from sqlalchemy import distinct
+stmt = (
+    select(User)
+    .distinct(User.department)
+    .order_by(User.department, desc(User.created_at))
+)
+```
+
+## Query Execution Methods
+
+Different ways to execute queries and retrieve results.
+
+| Method | Returns | Use Case |
+|--------|---------|----------|
+| `.scalars()` | Scalar values | Single entity queries |
+| `.execute()` | Row objects | Multi-column or mixed queries |
+| `.all()` | List | Get all results |
+| `.first()` | Single or None | Get first result |
+| `.one()` | Single (raises if not exactly one) | Expect exactly one result |
+| `.one_or_none()` | Single or None (raises if multiple) | Expect zero or one result |
+
+```python
+# Examples
+stmt = select(User)
+
+# Get all users as list
+users = session.scalars(stmt).all()
+
+# Get first user or None
+user = session.scalars(stmt).first()
+
+# Expect exactly one user
+user = session.scalars(stmt.where(User.id == 1)).one()
+
+# Iterate without loading all into memory
+for user in session.scalars(stmt):
+    process(user)
+```
+
+<Note>
+Use `scalars()` when selecting a single entity type. Use `execute()` when selecting multiple columns or entities.
+</Note>
+
+## Performance Tips
+
+<Steps>
+
+<Step title="Use indexes for filter columns">
+
+Ensure columns used in `where()` clauses have appropriate database indexes.
+
+```python
+# Good - assuming user.email has an index
+stmt = select(User).where(User.email == "alice@example.com")
+```
+
+</Step>
+
+<Step title="Select only needed columns">
+
+Avoid loading entire entities when you only need specific columns.
+
+```python
+# More efficient for large objects
+stmt = select(User.id, User.name).where(User.is_active == True)
+```
+
+</Step>
+
+<Step title="Use appropriate eager loading">
+
+Prevent N+1 query problems by using eager loading strategies (covered in [Loading Techniques](/orm/loading-techniques)).
+
+</Step>
+
+</Steps>
+
+## See Also
+
+- [Queryable Attributes](/orm/queryable-attributes) - Working with mapped attributes and operators
+- [Loading Techniques](/orm/loading-techniques) - Eager and lazy loading strategies
+- [SQLAlchemy Select Documentation](https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.select)

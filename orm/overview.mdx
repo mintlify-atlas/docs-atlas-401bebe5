@@ -1,0 +1,354 @@
+---
+title: ORM Overview
+description: Understanding SQLAlchemy's ORM architecture and when to use ORM vs Core
+---
+
+## Introduction
+
+SQLAlchemy's Object Relational Mapper (ORM) presents a method of associating user-defined Python classes with database tables, and instances of those classes (objects) with rows in their corresponding tables. It includes a system that transparently synchronizes all changes in state between objects and their related rows, called a **unit of work**, as well as a system for expressing database queries in terms of user-defined classes and their defined relationships.
+
+## ORM vs Core
+
+SQLAlchemy provides two main ways to interact with databases:
+
+<Tabs>
+  <Tab title="ORM">
+    **Object Relational Mapper** - High-level, Pythonic API
+
+    ```python
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+    class Base(DeclarativeBase):
+        pass
+
+    class User(Base):
+        __tablename__ = "user_account"
+
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str]
+        email: Mapped[str]
+    ```
+
+    **Use when:**
+    - Building application models with business logic
+    - Need automatic relationship management
+    - Working with complex object graphs
+    - Require unit of work pattern and identity mapping
+    - Need lazy/eager loading strategies
+
+  </Tab>
+  <Tab title="Core">
+    **SQL Expression Language** - Low-level, SQL-centric API
+
+    ```python
+    from sqlalchemy import Table, Column, Integer, String, MetaData
+
+    metadata = MetaData()
+
+    user_table = Table(
+        "user_account",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("name", String),
+        Column("email", String),
+    )
+    ```
+
+    **Use when:**
+    - Building data processing pipelines
+    - Need maximum performance for bulk operations
+    - Working with dynamic schemas
+    - Executing complex SQL with fine control
+    - No need for object state management
+
+  </Tab>
+</Tabs>
+
+## ORM Architecture
+
+The ORM consists of several key components working together:
+
+<Steps>
+  <Step title="Declarative Base">
+    The foundation for all mapped classes. Provides the registry and metadata collection.
+
+    ```python
+    from sqlalchemy.orm import DeclarativeBase
+
+    class Base(DeclarativeBase):
+        pass
+    ```
+  </Step>
+
+  <Step title="Mapped Classes">
+    User-defined classes that represent database tables. Each instance represents a row.
+
+    ```python
+    class User(Base):
+        __tablename__ = "users"
+        id: Mapped[int] = mapped_column(primary_key=True)
+    ```
+  </Step>
+
+  <Step title="Mapper">
+    The configuration that associates a class with a table. Created automatically by declarative.
+
+    ```python
+    # Access the mapper
+    from sqlalchemy import inspect
+    mapper = inspect(User)
+    ```
+  </Step>
+
+  <Step title="Session">
+    The interface for persistence operations. Manages the unit of work and identity map.
+
+    ```python
+    from sqlalchemy.orm import Session
+
+    with Session(engine) as session:
+        user = User(name="Alice")
+        session.add(user)
+        session.commit()
+    ```
+  </Step>
+</Steps>
+
+## Key ORM Features
+
+### Unit of Work
+
+The Session tracks all changes to objects and flushes them to the database efficiently:
+
+```python
+with Session(engine) as session:
+    # Objects are tracked automatically
+    user = session.get(User, 1)
+    user.name = "New Name"  # Change is tracked
+    
+    # Flush sends SQL at commit time
+    session.commit()
+```
+
+### Identity Map
+
+Ensures that each database row is represented by exactly one object per Session:
+
+```python
+with Session(engine) as session:
+    user1 = session.get(User, 1)
+    user2 = session.get(User, 1)
+    
+    # Both references point to the same object
+    assert user1 is user2
+```
+
+### Relationship Management
+
+Automatic handling of foreign key relationships between objects:
+
+```python
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    addresses: Mapped[List["Address"]] = relationship()
+
+class Address(Base):
+    __tablename__ = "addresses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+```
+
+## Modern 2.0 Style vs Legacy
+
+<Warning>
+SQLAlchemy 2.0+ uses type annotations with `Mapped[]` for better IDE support and type safety.
+</Warning>
+
+<Tabs>
+  <Tab title="2.0 Style (Recommended)">
+    ```python
+    from typing import List, Optional
+    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+    class Base(DeclarativeBase):
+        pass
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        # Type-annotated columns with Mapped[]
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str] = mapped_column()
+        email: Mapped[Optional[str]]  # Nullable
+        
+        # Type-annotated relationships
+        addresses: Mapped[List["Address"]] = relationship(
+            back_populates="user"
+        )
+    ```
+  </Tab>
+
+  <Tab title="Legacy 1.x Style">
+    ```python
+    from sqlalchemy import Column, Integer, String, ForeignKey
+    from sqlalchemy.orm import declarative_base, relationship
+
+    Base = declarative_base()
+
+    class User(Base):
+        __tablename__ = "users"
+        
+        # Explicit Column objects
+        id = Column(Integer, primary_key=True)
+        name = Column(String)
+        email = Column(String, nullable=True)
+        
+        # Relationships without type hints
+        addresses = relationship("Address", back_populates="user")
+    ```
+  </Tab>
+</Tabs>
+
+## Registry and Metadata
+
+### Registry
+
+The `registry` object manages the collection of mappings:
+
+```python
+from sqlalchemy.orm import registry
+
+# Create a registry
+reg = registry()
+
+# Access from DeclarativeBase
+class Base(DeclarativeBase):
+    pass
+
+print(Base.registry)  # The registry instance
+```
+
+<ParamField path="registry.metadata" type="MetaData">
+  The MetaData collection holding all Table objects
+</ParamField>
+
+<ParamField path="registry.mappers" type="frozenset[Mapper]">
+  Read-only collection of all Mapper objects in this registry
+</ParamField>
+
+<ParamField path="registry.type_annotation_map" type="dict">
+  Maps Python types to SQLAlchemy types for Mapped[] annotations
+</ParamField>
+
+### MetaData
+
+The `metadata` object is a collection of Table objects:
+
+```python
+from sqlalchemy import MetaData
+
+# Custom metadata
+my_metadata = MetaData(schema="myschema")
+
+class Base(DeclarativeBase):
+    metadata = my_metadata
+
+# Create all tables
+Base.metadata.create_all(engine)
+```
+
+## Best Practices
+
+<Note>
+**Use DeclarativeBase for new projects** - The modern declarative base provides better type checking support and is more maintainable than the legacy `declarative_base()` function.
+</Note>
+
+### Type Annotation Map
+
+Customize how Python types map to SQL types:
+
+```python
+from typing import Annotated
+from sqlalchemy import String, BigInteger
+
+bigint = Annotated[int, "bigint"]
+
+class Base(DeclarativeBase):
+    type_annotation_map = {
+        str: String().with_variant(String(255), "mysql", "mariadb"),
+        bigint: BigInteger(),
+    }
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[bigint] = mapped_column(primary_key=True)
+    name: Mapped[str]  # Will use String(255) on MySQL/MariaDB
+```
+
+### Querying
+
+Use the select() construct for type-safe queries:
+
+```python
+from sqlalchemy import select
+
+with Session(engine) as session:
+    # Select statement
+    stmt = select(User).where(User.name == "Alice")
+    
+    # Execute and get results
+    users = session.scalars(stmt).all()
+    
+    # Get single result
+    user = session.scalar(select(User).where(User.id == 1))
+```
+
+## Common Patterns
+
+### Mixin Classes
+
+Share common columns across multiple models:
+
+```python
+from datetime import datetime
+from sqlalchemy import func
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+```
+
+### Abstract Base Classes
+
+Define non-mapped base classes:
+
+```python
+class CommonBase(Base):
+    __abstract__ = True
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+class User(CommonBase):
+    __tablename__ = "users"
+    name: Mapped[str]
+
+class Post(CommonBase):
+    __tablename__ = "posts"
+    title: Mapped[str]
+```
+
+## See Also
+
+- [Declarative Configuration](/orm/declarative-config)
+- [Mapped Classes](/orm/mapped-classes)
+- [Relationships](/orm/relationships)

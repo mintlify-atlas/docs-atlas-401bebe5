@@ -1,0 +1,449 @@
+---
+title: Engine Architecture
+description: Understand SQLAlchemy's Engine, the core interface for database connectivity, connection pooling, and dialect management.
+---
+
+# Engine Architecture
+
+The **Engine** is the starting point for any SQLAlchemy Core application. It manages database connectivity, connection pooling, and dialect-specific behavior, serving as a factory for database connections.
+
+## Overview
+
+The Engine doesn't establish actual database connections until they're needed. Instead, it holds configuration and manages a connection pool that creates connections on demand.
+
+```python
+from sqlalchemy import create_engine
+
+# Create an engine - no connection is made yet
+engine = create_engine("postgresql+psycopg2://user:password@localhost/dbname")
+
+# Connection is established when needed
+with engine.connect() as conn:
+    result = conn.execute(text("SELECT 1"))
+```
+
+## Creating an Engine
+
+### Basic Usage
+
+Use `create_engine()` to create a new Engine instance:
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine("postgresql+psycopg2://scott:tiger@localhost/test")
+```
+
+<Note>
+The `create_engine()` function does **not** establish any actual database connections immediately. Connections are created when first requested via `Engine.connect()` or when executing statements.
+</Note>
+
+### Function Signature
+
+```python
+def create_engine(
+    url: Union[str, URL],
+    *,
+    # Connection arguments
+    connect_args: Dict[Any, Any] = {},
+    creator: Callable = None,
+    
+    # Logging and debugging
+    echo: Union[bool, str] = False,
+    echo_pool: Union[bool, str] = False,
+    hide_parameters: bool = False,
+    
+    # Pool configuration
+    pool: Pool = None,
+    poolclass: Type[Pool] = None,
+    pool_size: int = 5,
+    max_overflow: int = 10,
+    pool_timeout: float = 30,
+    pool_recycle: int = -1,
+    pool_pre_ping: bool = False,
+    pool_use_lifo: bool = False,
+    pool_reset_on_return: str = "rollback",
+    
+    # Engine options
+    isolation_level: str = None,
+    execution_options: Dict = {},
+    json_serializer: Callable = None,
+    json_deserializer: Callable = None,
+    
+    # Performance
+    query_cache_size: int = 500,
+    insertmanyvalues_page_size: int = 1000,
+    
+    **kwargs: Any
+) -> Engine
+```
+
+## URL Format
+
+Database URLs follow the RFC-1738 format:
+
+```
+dialect[+driver]://username:password@host:port/database[?key=value...]
+```
+
+### Common URL Examples
+
+<Steps>
+  <Step title="PostgreSQL">
+    ```python
+    # Using psycopg2 (default driver)
+    engine = create_engine("postgresql://user:pass@localhost/dbname")
+    
+    # Using psycopg2 explicitly
+    engine = create_engine("postgresql+psycopg2://user:pass@localhost/dbname")
+    
+    # Using asyncpg (async)
+    from sqlalchemy.ext.asyncio import create_async_engine
+    engine = create_async_engine("postgresql+asyncpg://user:pass@localhost/dbname")
+    ```
+  </Step>
+  
+  <Step title="MySQL / MariaDB">
+    ```python
+    # Using mysqlclient (recommended)
+    engine = create_engine("mysql+mysqldb://user:pass@localhost/dbname")
+    
+    # Using PyMySQL (pure Python)
+    engine = create_engine("mysql+pymysql://user:pass@localhost/dbname")
+    
+    # Using MySQL Connector/Python
+    engine = create_engine("mysql+mysqlconnector://user:pass@localhost/dbname")
+    ```
+  </Step>
+  
+  <Step title="SQLite">
+    ```python
+    # In-memory database
+    engine = create_engine("sqlite:///:memory:")
+    
+    # File-based database (relative path)
+    engine = create_engine("sqlite:///mydb.db")
+    
+    # File-based database (absolute path)
+    engine = create_engine("sqlite:////absolute/path/to/mydb.db")
+    ```
+  </Step>
+  
+  <Step title="Oracle">
+    ```python
+    # Using cx_Oracle
+    engine = create_engine("oracle+cx_oracle://user:pass@localhost:1521/?service_name=ORCL")
+    ```
+  </Step>
+  
+  <Step title="Microsoft SQL Server">
+    ```python
+    # Using pyodbc
+    engine = create_engine("mssql+pyodbc://user:pass@localhost/dbname?driver=ODBC+Driver+17+for+SQL+Server")
+    
+    # Using pymssql
+    engine = create_engine("mssql+pymssql://user:pass@localhost/dbname")
+    ```
+  </Step>
+</Steps>
+
+### URL Components
+
+<ParamField path="dialect" type="string" required>
+  Database backend name: `postgresql`, `mysql`, `sqlite`, `oracle`, `mssql`, etc.
+</ParamField>
+
+<ParamField path="driver" type="string">
+  DBAPI driver name: `psycopg2`, `pymysql`, `cx_oracle`, etc. If omitted, the default driver for the dialect is used.
+</ParamField>
+
+<ParamField path="username" type="string">
+  Database username. Must be URL-encoded if it contains special characters.
+</ParamField>
+
+<ParamField path="password" type="string">
+  Database password. Must be URL-encoded if it contains special characters.
+</ParamField>
+
+<ParamField path="host" type="string">
+  Hostname or IP address of the database server.
+</ParamField>
+
+<ParamField path="port" type="integer">
+  Port number. Each dialect has a default port if omitted.
+</ParamField>
+
+<ParamField path="database" type="string">
+  Database name or path (for SQLite).
+</ParamField>
+
+<ParamField path="query" type="string">
+  Query string parameters for driver-specific or dialect-specific options.
+</ParamField>
+
+### Programmatic URL Construction
+
+For dynamic URL construction or when handling special characters:
+
+```python
+from sqlalchemy.engine import URL
+
+url = URL.create(
+    drivername="postgresql+psycopg2",
+    username="user",
+    password="p@ss!w0rd",  # No need to URL-encode
+    host="localhost",
+    port=5432,
+    database="mydb",
+    query={"sslmode": "require", "connect_timeout": "10"}
+)
+
+engine = create_engine(url)
+```
+
+<Warning>
+When passing passwords as strings in `create_engine()`, special characters must be URL-encoded. Use `URL.create()` to avoid manual encoding.
+</Warning>
+
+## Engine Configuration Options
+
+### Logging and Echo
+
+<ParamField path="echo" type="bool | str" default="False">
+  Enable SQL statement logging. Set to `True` for statement logging, or `"debug"` to also log result sets.
+  
+  ```python
+  engine = create_engine("postgresql://...", echo=True)
+  ```
+</ParamField>
+
+<ParamField path="echo_pool" type="bool | str" default="False">
+  Enable connection pool logging. Set to `"debug"` for detailed pool checkout/checkin logging.
+  
+  ```python
+  engine = create_engine("postgresql://...", echo_pool="debug")
+  ```
+</ParamField>
+
+<ParamField path="hide_parameters" type="bool" default="False">
+  When `True`, SQL parameter values are hidden from logs for security.
+</ParamField>
+
+### Connection Pool Configuration
+
+See the [Connection Management](/concepts/connections#connection-pooling) page for detailed pool configuration.
+
+<ParamField path="pool_size" type="int" default="5">
+  Number of connections to maintain in the pool.
+</ParamField>
+
+<ParamField path="max_overflow" type="int" default="10">
+  Maximum number of connections that can be created beyond `pool_size`.
+</ParamField>
+
+<ParamField path="pool_timeout" type="float" default="30">
+  Seconds to wait for a connection from the pool before raising an error.
+</ParamField>
+
+<ParamField path="pool_recycle" type="int" default="-1">
+  Recycle connections after this many seconds. Useful for databases that close idle connections.
+  
+  ```python
+  # Recycle connections after 1 hour (MySQL default timeout is 8 hours)
+  engine = create_engine("mysql://...", pool_recycle=3600)
+  ```
+</ParamField>
+
+<ParamField path="pool_pre_ping" type="bool" default="False">
+  Test connections for liveness before using them.
+  
+  ```python
+  # Enable pessimistic disconnect handling
+  engine = create_engine("postgresql://...", pool_pre_ping=True)
+  ```
+</ParamField>
+
+<ParamField path="pool_use_lifo" type="bool" default="False">
+  Use last-in-first-out for pool retrieval, allowing server-side timeouts to close unused connections.
+</ParamField>
+
+### Transaction Isolation
+
+<ParamField path="isolation_level" type="str">
+  Set the default transaction isolation level. Valid values depend on the database backend:
+  - `"SERIALIZABLE"`
+  - `"REPEATABLE READ"`
+  - `"READ COMMITTED"`
+  - `"READ UNCOMMITTED"`
+  - `"AUTOCOMMIT"`
+  
+  ```python
+  engine = create_engine(
+      "postgresql://...",
+      isolation_level="REPEATABLE READ"
+  )
+  ```
+</ParamField>
+
+### Performance Options
+
+<ParamField path="query_cache_size" type="int" default="500">
+  Size of the SQL compilation cache. Set to `0` to disable caching.
+</ParamField>
+
+<ParamField path="insertmanyvalues_page_size" type="int" default="1000">
+  Number of rows per batch in executemany operations with RETURNING support.
+</ParamField>
+
+## Engine from Configuration
+
+Create an engine from a configuration dictionary (useful for config files):
+
+```python
+from sqlalchemy import engine_from_config
+
+config = {
+    "sqlalchemy.url": "postgresql://user:pass@localhost/dbname",
+    "sqlalchemy.echo": "True",
+    "sqlalchemy.pool_size": "10",
+    "sqlalchemy.max_overflow": "20"
+}
+
+engine = engine_from_config(config, prefix="sqlalchemy.")
+```
+
+## Engine Methods
+
+### Connecting
+
+```python
+# Get a connection from the pool
+with engine.connect() as conn:
+    result = conn.execute(text("SELECT * FROM users"))
+    for row in result:
+        print(row)
+```
+
+### Executing (Context Manager with Transaction)
+
+```python
+# Automatically begins and commits a transaction
+with engine.begin() as conn:
+    conn.execute(text("INSERT INTO users (name) VALUES (:name)"), {"name": "Alice"})
+    conn.execute(text("INSERT INTO users (name) VALUES (:name)"), {"name": "Bob"})
+# Transaction is committed automatically if no exception
+```
+
+### Disposal
+
+```python
+# Close all pooled connections
+engine.dispose()
+```
+
+<Info>
+Call `engine.dispose()` when you need to ensure all database connections are closed, such as before forking a process or at application shutdown.
+</Info>
+
+## Engine Properties
+
+- `engine.dialect` - The Dialect instance for the database backend
+- `engine.pool` - The Pool instance managing connections
+- `engine.url` - The URL object representing the connection string
+- `engine.driver` - The DBAPI driver name (e.g., "psycopg2")
+- `engine.name` - The database backend name (e.g., "postgresql")
+
+## Custom DBAPI Connection
+
+Override the default connection creation:
+
+```python
+import psycopg2
+
+def custom_creator():
+    return psycopg2.connect(
+        host="localhost",
+        user="user",
+        password="password",
+        database="mydb",
+        connect_timeout=10
+    )
+
+engine = create_engine("postgresql://", creator=custom_creator)
+```
+
+## Advanced: Custom Connection Arguments
+
+Pass additional arguments to the DBAPI `connect()` method:
+
+```python
+engine = create_engine(
+    "postgresql://user:pass@localhost/dbname",
+    connect_args={
+        "connect_timeout": 10,
+        "application_name": "my_app",
+        "options": "-c timezone=utc"
+    }
+)
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Create Once, Use Many">
+    Create one Engine per database URL in your application. The Engine is designed to be a global singleton.
+    
+    ```python
+    # Good - module level
+    engine = create_engine("postgresql://...")
+    
+    # Bad - creating engines repeatedly
+    def get_users():
+        engine = create_engine("postgresql://...")  # Don't do this
+        # ...
+    ```
+  </Step>
+  
+  <Step title="Use Connection Context Managers">
+    Always use context managers to ensure connections are properly returned to the pool.
+    
+    ```python
+    # Good
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT 1"))
+    
+    # Avoid
+    conn = engine.connect()
+    result = conn.execute(text("SELECT 1"))
+    conn.close()  # Easy to forget
+    ```
+  </Step>
+  
+  <Step title="Configure Pool Appropriately">
+    Tune pool settings based on your application's concurrency and database limits.
+    
+    ```python
+    engine = create_engine(
+        "postgresql://...",
+        pool_size=20,        # Base pool size
+        max_overflow=10,     # Allow bursts up to 30 connections
+        pool_recycle=3600,   # Recycle after 1 hour
+        pool_pre_ping=True   # Check connection health
+    )
+    ```
+  </Step>
+  
+  <Step title="Enable Logging During Development">
+    Use `echo=True` to see generated SQL during development.
+    
+    ```python
+    engine = create_engine("postgresql://...", echo=True)
+    ```
+  </Step>
+</Steps>
+
+## See Also
+
+- [Connection Management](/concepts/connections) - Working with connections and transactions
+- [MetaData System](/concepts/metadata) - Organizing database schema definitions
+- [Schema Definition](/concepts/schema) - Defining tables, columns, and constraints

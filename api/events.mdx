@@ -1,0 +1,364 @@
+---
+title: Events API
+description: SQLAlchemy events system API reference
+---
+
+Complete reference for SQLAlchemy's event system.
+
+## Event System
+
+SQLAlchemy provides a comprehensive event system for hooking into ORM and Core operations.
+
+```python
+from sqlalchemy import event
+
+@event.listens_for(Target, "event_name")
+def receive_event(*args, **kwargs):
+    # Handle event
+    pass
+```
+
+## Engine Events
+
+### Connection Lifecycle
+
+**connect** - New DBAPI connection created
+
+```python
+@event.listens_for(engine, "connect")
+def receive_connect(dbapi_conn, connection_record):
+    print("New connection created")
+```
+
+**checkout** - Connection checked out from pool
+
+```python
+@event.listens_for(engine, "checkout")
+def receive_checkout(dbapi_conn, connection_record, connection_proxy):
+    print("Connection checked out")
+```
+
+**checkin** - Connection returned to pool
+
+```python
+@event.listens_for(engine, "checkin")
+def receive_checkin(dbapi_conn, connection_record):
+    print("Connection returned")
+```
+
+**close** - Connection closed
+
+```python
+@event.listens_for(engine, "close")
+def receive_close(dbapi_conn, connection_record):
+    print("Connection closed")
+```
+
+### Execution Events
+
+**before_cursor_execute** - Before SQL execution
+
+```python
+@event.listens_for(engine, "before_cursor_execute")
+def receive_before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    print(f"Executing: {statement}")
+```
+
+**after_cursor_execute** - After SQL execution
+
+```python
+@event.listens_for(engine, "after_cursor_execute")
+def receive_after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+    print(f"Executed: {statement}")
+```
+
+## ORM Session Events
+
+### Session Lifecycle
+
+**after_transaction_create** - Transaction created
+
+```python
+from sqlalchemy.orm import Session
+
+@event.listens_for(Session, "after_transaction_create")
+def receive_after_transaction_create(session, transaction):
+    print("Transaction started")
+```
+
+**after_transaction_end** - Transaction ended
+
+```python
+@event.listens_for(Session, "after_transaction_end")
+def receive_after_transaction_end(session, transaction):
+    print("Transaction ended")
+```
+
+### Flush Events
+
+**before_flush** - Before session flush
+
+```python
+@event.listens_for(Session, "before_flush")
+def receive_before_flush(session, flush_context, instances):
+    print(f"Flushing {len(session.dirty)} dirty objects")
+```
+
+**after_flush** - After session flush
+
+```python
+@event.listens_for(Session, "after_flush")
+def receive_after_flush(session, flush_context):
+    print("Flush complete")
+```
+
+**after_flush_postexec** - After flush, after execute
+
+```python
+@event.listens_for(Session, "after_flush_postexec")
+def receive_after_flush_postexec(session, flush_context):
+    print("Post-flush complete")
+```
+
+### Commit/Rollback Events
+
+**after_commit** - After successful commit
+
+```python
+@event.listens_for(Session, "after_commit")
+def receive_after_commit(session):
+    print("Transaction committed")
+```
+
+**after_rollback** - After rollback
+
+```python
+@event.listens_for(Session, "after_rollback")
+def receive_after_rollback(session):
+    print("Transaction rolled back")
+```
+
+**after_soft_rollback** - After soft rollback (no transaction)
+
+```python
+@event.listens_for(Session, "after_soft_rollback")
+def receive_after_soft_rollback(session, previous_transaction):
+    print("Soft rollback")
+```
+
+## Mapper Events
+
+### Persistence Events
+
+**before_insert** - Before INSERT
+
+```python
+from sqlalchemy.orm import Mapper
+
+@event.listens_for(User, "before_insert")
+def receive_before_insert(mapper, connection, target):
+    target.created_at = datetime.utcnow()
+```
+
+**after_insert** - After INSERT
+
+```python
+@event.listens_for(User, "after_insert")
+def receive_after_insert(mapper, connection, target):
+    print(f"Inserted user: {target.id}")
+```
+
+**before_update** - Before UPDATE
+
+```python
+@event.listens_for(User, "before_update")
+def receive_before_update(mapper, connection, target):
+    target.updated_at = datetime.utcnow()
+```
+
+**after_update** - After UPDATE
+
+```python
+@event.listens_for(User, "after_update")
+def receive_after_update(mapper, connection, target):
+    print(f"Updated user: {target.id}")
+```
+
+**before_delete** - Before DELETE
+
+```python
+@event.listens_for(User, "before_delete")
+def receive_before_delete(mapper, connection, target):
+    print(f"Deleting user: {target.id}")
+```
+
+**after_delete** - After DELETE
+
+```python
+@event.listens_for(User, "after_delete")
+def receive_after_delete(mapper, connection, target):
+    print(f"Deleted user: {target.id}")
+```
+
+## Instance Events
+
+### Load Events
+
+**load** - Instance loaded from database
+
+```python
+@event.listens_for(User, "load")
+def receive_load(target, context):
+    print(f"Loaded user: {target.id}")
+```
+
+**refresh** - Instance refreshed
+
+```python
+@event.listens_for(User, "refresh")
+def receive_refresh(target, context, attrs):
+    print(f"Refreshed user: {target.id}")
+```
+
+**refresh_flush** - Instance refreshed during flush
+
+```python
+@event.listens_for(User, "refresh_flush")
+def receive_refresh_flush(target, flush_context, attrs):
+    print(f"Flush refresh user: {target.id}")
+```
+
+### State Events
+
+**init** - Instance initialized
+
+```python
+@event.listens_for(User, "init")
+def receive_init(target, args, kwargs):
+    print("User instance created")
+```
+
+**expire** - Instance expired
+
+```python
+@event.listens_for(User, "expire")
+def receive_expire(target, attrs):
+    print(f"User {target.id} expired")
+```
+
+## Attribute Events
+
+### Attribute Changes
+
+**set** - Attribute set
+
+```python
+from sqlalchemy.orm import attributes
+
+@event.listens_for(User.name, "set")
+def receive_set(target, value, oldvalue, initiator):
+    print(f"Name changed from {oldvalue} to {value}")
+```
+
+**append** - Item appended to collection
+
+```python
+@event.listens_for(User.addresses, "append")
+def receive_append(target, value, initiator):
+    print(f"Address added to user {target.id}")
+```
+
+**remove** - Item removed from collection
+
+```python
+@event.listens_for(User.addresses, "remove")
+def receive_remove(target, value, initiator):
+    print(f"Address removed from user {target.id}")
+```
+
+## Event Modifiers
+
+### propagate
+
+Propagate to subclasses.
+
+```python
+@event.listens_for(User, "before_insert", propagate=True)
+def receive_before_insert(mapper, connection, target):
+    # Applies to User and all subclasses
+    pass
+```
+
+### raw
+
+Receive raw DBAPI connection.
+
+```python
+@event.listens_for(engine, "connect", raw=True)
+def receive_connect(dbapi_conn):
+    # dbapi_conn is raw driver connection
+    pass
+```
+
+### retval
+
+Event can modify return value.
+
+```python
+@event.listens_for(Session, "before_flush", retval=True)
+def receive_before_flush(session, flush_context, instances):
+    # Can prevent flush by returning False
+    return True
+```
+
+## Common Patterns
+
+### Automatic Timestamps
+
+```python
+from datetime import datetime
+
+@event.listens_for(User, "before_insert")
+def set_created_at(mapper, connection, target):
+    target.created_at = datetime.utcnow()
+
+@event.listens_for(User, "before_update")
+def set_updated_at(mapper, connection, target):
+    target.updated_at = datetime.utcnow()
+```
+
+### Audit Logging
+
+```python
+@event.listens_for(Session, "after_flush")
+def receive_after_flush(session, flush_context):
+    for obj in session.new:
+        audit_log("INSERT", obj)
+    for obj in session.dirty:
+        audit_log("UPDATE", obj)
+    for obj in session.deleted:
+        audit_log("DELETE", obj)
+```
+
+### Query Logging
+
+```python
+import logging
+
+logger = logging.getLogger("sqlalchemy.engine")
+
+@event.listens_for(engine, "before_cursor_execute")
+def log_query(conn, cursor, statement, parameters, context, executemany):
+    logger.info(f"SQL: {statement}")
+    logger.info(f"Params: {parameters}")
+```
+
+### Connection Initialization
+
+```python
+@event.listens_for(engine, "connect")
+def set_connection_options(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("SET TIME ZONE 'UTC'")
+    cursor.close()
+```

@@ -1,0 +1,416 @@
+---
+title: Inheritance Mapping
+description: Map class hierarchies to database tables with single table, joined table, and concrete table inheritance strategies
+---
+
+SQLAlchemy supports three primary strategies for mapping class hierarchies to database tables. Each strategy offers different trade-offs between query performance, schema complexity, and data normalization.
+
+## Overview
+
+Inheritance mapping allows you to represent object-oriented inheritance relationships in your database schema. SQLAlchemy provides three distinct strategies:
+
+- **Single Table Inheritance**: All classes in a hierarchy share one table
+- **Joined Table Inheritance**: Each class has its own table, joined together
+- **Concrete Table Inheritance**: Each concrete class has a complete, independent table
+
+## Single Table Inheritance
+
+Single table inheritance stores all classes in a hierarchy within a single database table. A discriminator column identifies which class each row represents.
+
+### When to Use
+
+<Note>
+Use single table inheritance when:
+- Subclasses have few additional columns
+- Query performance is critical (no joins required)
+- The schema can accommodate nullable columns for subclass-specific attributes
+</Note>
+
+### Basic Configuration
+
+Configure single table inheritance using `polymorphic_on` and `polymorphic_identity`:
+
+```python
+from sqlalchemy import String, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+class Base(DeclarativeBase):
+    pass
+
+class Person(Base):
+    __tablename__ = "person"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    type: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {
+        "polymorphic_identity": "person",
+        "polymorphic_on": "type",
+    }
+
+class Engineer(Person):
+    engineer_name: Mapped[str] = mapped_column(String(50), nullable=True)
+    primary_language: Mapped[str] = mapped_column(String(50), nullable=True)
+    
+    __mapper_args__ = {"polymorphic_identity": "engineer"}
+
+class Manager(Person):
+    manager_name: Mapped[str] = mapped_column(String(50), nullable=True)
+    
+    __mapper_args__ = {"polymorphic_identity": "manager"}
+```
+
+<Warning>
+Columns specific to subclasses must be nullable when using single table inheritance, as rows for other subclasses will not have values for these columns.
+</Warning>
+
+### Querying with Single Table Inheritance
+
+Queries automatically filter by the discriminator column:
+
+```python
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+# Query returns only Engineer instances
+engineers = session.scalars(select(Engineer)).all()
+
+# Query returns all Person types
+all_people = session.scalars(select(Person)).all()
+```
+
+### Polymorphic Queries
+
+Use `with_polymorphic()` to query across multiple subclasses efficiently:
+
+```python
+from sqlalchemy.orm import with_polymorphic
+from sqlalchemy import or_
+
+eng_manager = with_polymorphic(Person, [Engineer, Manager])
+
+results = session.scalars(
+    select(eng_manager).filter(
+        or_(
+            eng_manager.Engineer.engineer_name == "engineer1",
+            eng_manager.Manager.manager_name == "manager2",
+        )
+    )
+).all()
+```
+
+## Joined Table Inheritance
+
+Joined table inheritance creates a separate table for each class in the hierarchy. Subclass tables have a foreign key to the parent table's primary key.
+
+### When to Use
+
+<Note>
+Use joined table inheritance when:
+- Subclasses have many additional columns
+- Data normalization is important
+- You want to avoid nullable columns
+- You can accept the overhead of joins in queries
+</Note>
+
+### Basic Configuration
+
+Each subclass declares its own `__tablename__` and includes a foreign key to the parent:
+
+```python
+class Person(Base):
+    __tablename__ = "person"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    type: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {
+        "polymorphic_identity": "person",
+        "polymorphic_on": "type",
+    }
+
+class Engineer(Person):
+    __tablename__ = "engineer"
+    
+    id: Mapped[int] = mapped_column(ForeignKey("person.id"), primary_key=True)
+    engineer_name: Mapped[str] = mapped_column(String(50))
+    primary_language: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {"polymorphic_identity": "engineer"}
+
+class Manager(Person):
+    __tablename__ = "manager"
+    
+    id: Mapped[int] = mapped_column(ForeignKey("person.id"), primary_key=True)
+    manager_name: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {"polymorphic_identity": "manager"}
+```
+
+### Schema Structure
+
+The resulting schema creates normalized tables:
+
+```sql
+CREATE TABLE person (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(50),
+    type VARCHAR(50)
+);
+
+CREATE TABLE engineer (
+    id INTEGER PRIMARY KEY,
+    engineer_name VARCHAR(50),
+    primary_language VARCHAR(50),
+    status VARCHAR(50),
+    FOREIGN KEY(id) REFERENCES person (id)
+);
+
+CREATE TABLE manager (
+    id INTEGER PRIMARY KEY,
+    manager_name VARCHAR(50),
+    status VARCHAR(50),
+    FOREIGN KEY(id) REFERENCES person (id)
+);
+```
+
+### Optimizing Joined Queries
+
+Use the `flat=True` parameter with `with_polymorphic()` to reduce subquery nesting:
+
+```python
+eng_manager = with_polymorphic(Person, [Engineer, Manager], flat=True)
+
+results = session.scalars(
+    select(eng_manager).filter(
+        or_(
+            eng_manager.Engineer.engineer_name == "engineer1",
+            eng_manager.Manager.manager_name == "manager2",
+        )
+    )
+).all()
+```
+
+<Note>
+The `flat=True` option is recommended for joined inheritance mappings as it produces more efficient SQL with fewer levels of subqueries.
+</Note>
+
+## Concrete Table Inheritance
+
+Concrete table inheritance creates a complete, independent table for each concrete class. Each table contains all columns needed for that class, including inherited columns.
+
+### When to Use
+
+<Note>
+Use concrete table inheritance when:
+- Each subclass is truly independent
+- You rarely query across the hierarchy
+- You want maximum query performance for individual classes
+- Schema denormalization is acceptable
+</Note>
+
+### Basic Configuration
+
+Use `ConcreteBase` for the base class and set `concrete=True` in mapper args:
+
+```python
+from sqlalchemy.ext.declarative import ConcreteBase
+
+class Person(ConcreteBase, Base):
+    __tablename__ = "person"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id"))
+    name: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {
+        "polymorphic_identity": "person",
+    }
+
+class Engineer(Person):
+    __tablename__ = "engineer"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id"))
+    name: Mapped[str] = mapped_column(String(50))
+    engineer_name: Mapped[str] = mapped_column(String(50))
+    primary_language: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {"polymorphic_identity": "engineer", "concrete": True}
+
+class Manager(Person):
+    __tablename__ = "manager"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id"))
+    name: Mapped[str] = mapped_column(String(50))
+    manager_name: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {"polymorphic_identity": "manager", "concrete": True}
+```
+
+<Warning>
+With concrete table inheritance, each subclass must redeclare all columns from parent classes. Column definitions are not inherited automatically.
+</Warning>
+
+### Querying Across Concrete Tables
+
+When using `ConcreteBase`, use `"*"` with `with_polymorphic()` to query across all concrete tables:
+
+```python
+from sqlalchemy.orm import with_polymorphic
+
+eng_manager = with_polymorphic(Person, "*")
+
+results = session.scalars(
+    select(eng_manager).filter(
+        or_(
+            eng_manager.Engineer.engineer_name == "engineer1",
+            eng_manager.Manager.manager_name == "manager2",
+        )
+    )
+).all()
+```
+
+## Relationships with Inheritance
+
+Relationships can be defined on base or subclass entities:
+
+```python
+class Company(Base):
+    __tablename__ = "company"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    
+    employees: Mapped[list[Person]] = relationship(
+        back_populates="company",
+        cascade="all, delete-orphan"
+    )
+
+class Person(Base):
+    __tablename__ = "person"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id"))
+    
+    company: Mapped[Company] = relationship(back_populates="employees")
+```
+
+### Using of_type() for Subclass Joins
+
+Filter relationships by subclass type using `of_type()`:
+
+```python
+from sqlalchemy import select
+
+# Join only to Engineer subclass
+stmt = select(Company).join(Company.employees.of_type(Engineer))
+
+# Use with polymorphic types
+eng_manager = with_polymorphic(Person, [Engineer, Manager], flat=True)
+stmt = select(Company).join(Company.employees.of_type(eng_manager))
+```
+
+## Comparison of Strategies
+
+<Tabs>
+  <Tab title="Single Table">
+    **Advantages:**
+    - Fastest queries (no joins)
+    - Simple schema
+    - Easy to add new subclasses
+    
+    **Disadvantages:**
+    - Many nullable columns
+    - Potential for sparse data
+    - Limited by database row size limits
+  </Tab>
+  
+  <Tab title="Joined Table">
+    **Advantages:**
+    - Normalized schema
+    - No nullable columns for subclass attributes
+    - Efficient storage
+    
+    **Disadvantages:**
+    - Slower queries (requires joins)
+    - More complex schema
+    - More complex to modify
+  </Tab>
+  
+  <Tab title="Concrete Table">
+    **Advantages:**
+    - Maximum performance per class
+    - Complete independence
+    - Simple queries for individual classes
+    
+    **Disadvantages:**
+    - Schema duplication
+    - Difficult to query across hierarchy
+    - Complex to maintain shared columns
+  </Tab>
+</Tabs>
+
+## Advanced Patterns
+
+### Shared Columns in Single Table Inheritance
+
+Use `@declared_attr` to share columns between subclasses in single table inheritance:
+
+```python
+from sqlalchemy.orm import declared_attr
+
+class Engineer(Person):
+    @declared_attr
+    def status(cls) -> Mapped[str]:
+        return Person.__table__.c.get(
+            "status", mapped_column(String(30))
+        )
+    
+    engineer_name: Mapped[str] = mapped_column(String(50), nullable=True)
+
+class Manager(Person):
+    @declared_attr
+    def status(cls) -> Mapped[str]:
+        return Person.__table__.c.get(
+            "status", mapped_column(String(30))
+        )
+    
+    manager_name: Mapped[str] = mapped_column(String(50), nullable=True)
+```
+
+This pattern allows multiple subclasses to share the same column without conflicts.
+
+## Best Practices
+
+<Steps>
+  <Step title="Choose the right strategy">
+    Analyze your use case:
+    - Single table for simple hierarchies with few columns
+    - Joined table for normalized, complex hierarchies
+    - Concrete table for independent subclasses
+  </Step>
+  
+  <Step title="Configure polymorphic loading">
+    Set up `polymorphic_on` and `polymorphic_identity` correctly to ensure proper type discrimination.
+  </Step>
+  
+  <Step title="Optimize queries">
+    Use `with_polymorphic()` when querying multiple subclasses together. Use `flat=True` for joined inheritance.
+  </Step>
+  
+  <Step title="Handle nullable columns">
+    For single table inheritance, ensure subclass-specific columns are nullable and handle None values appropriately.
+  </Step>
+</Steps>
+
+## See Also
+
+- [ORM Relationships](/orm/relationships) - Working with relationships in mapped classes
+- [Querying](/orm/query-guide) - Advanced query techniques
+- [Session Basics](/orm/session-basics) - Managing ORM sessions

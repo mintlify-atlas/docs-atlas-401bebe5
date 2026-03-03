@@ -1,0 +1,889 @@
+---
+title: 'Working with Related Objects'
+description: 'Master relationships, lazy/eager loading, and advanced relationship patterns'
+---
+
+## Introduction
+
+This tutorial covers working with related objects in SQLAlchemy ORM:
+
+- Defining one-to-many, many-to-one, and many-to-many relationships
+- Understanding lazy vs eager loading
+- Using `joinedload`, `selectinload`, and `subqueryload`
+- Working with bidirectional relationships
+- Association objects and proxies
+- Cascading operations
+
+## Relationship Patterns
+
+### One-to-Many / Many-to-One
+
+The most common relationship pattern:
+
+```python
+from typing import List, Optional
+from sqlalchemy import create_engine, String, ForeignKey, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+
+class Base(DeclarativeBase):
+    pass
+
+class Department(Base):
+    __tablename__ = "department"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    
+    # One-to-many: one department has many employees
+    employees: Mapped[List["Employee"]] = relationship(
+        back_populates="department"
+    )
+
+class Employee(Base):
+    __tablename__ = "employee"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    department_id: Mapped[int] = mapped_column(ForeignKey("department.id"))
+    
+    # Many-to-one: many employees belong to one department
+    department: Mapped["Department"] = relationship(
+        back_populates="employees"
+    )
+
+engine = create_engine("sqlite://", echo=True)
+Base.metadata.create_all(engine)
+```
+
+<Note>
+The `back_populates` parameter creates a bidirectional relationship, keeping both sides in sync automatically.
+</Note>
+
+### Many-to-Many
+
+Many-to-many requires an association table:
+
+```python
+from sqlalchemy import Table, Column, Integer, ForeignKey
+
+# Association table
+student_course = Table(
+    "student_course",
+    Base.metadata,
+    Column("student_id", Integer, ForeignKey("student.id"), primary_key=True),
+    Column("course_id", Integer, ForeignKey("course.id"), primary_key=True)
+)
+
+class Student(Base):
+    __tablename__ = "student"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    
+    courses: Mapped[List["Course"]] = relationship(
+        secondary=student_course,
+        back_populates="students"
+    )
+
+class Course(Base):
+    __tablename__ = "course"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(100))
+    
+    students: Mapped[List["Student"]] = relationship(
+        secondary=student_course,
+        back_populates="courses"
+    )
+```
+
+### Self-Referential Relationships
+
+Objects that reference themselves:
+
+```python
+from typing import Dict
+from sqlalchemy.orm.collections import attribute_keyed_dict
+
+class TreeNode(Base):
+    __tablename__ = "tree_node"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    parent_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tree_node.id"))
+    
+    # Parent reference
+    parent: Mapped[Optional["TreeNode"]] = relationship(
+        back_populates="children",
+        remote_side=[id]  # Specifies the "remote" side
+    )
+    
+    # Children as a dictionary keyed by name
+    children: Mapped[Dict[str, "TreeNode"]] = relationship(
+        back_populates="parent",
+        collection_class=attribute_keyed_dict("name")
+    )
+```
+
+<Tip>
+Use `remote_side` to specify which column is the "remote" side in self-referential relationships.
+</Tip>
+
+## Association Objects
+
+When you need extra data on the relationship itself:
+
+```python
+from datetime import datetime
+
+class Order(Base):
+    __tablename__ = "order"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_name: Mapped[str] = mapped_column(String(100))
+    order_date: Mapped[datetime] = mapped_column(default=datetime.now)
+    
+    # Relationship to association object
+    order_items: Mapped[List["OrderItem"]] = relationship(
+        back_populates="order",
+        cascade="all, delete-orphan"
+    )
+
+class Item(Base):
+    __tablename__ = "item"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    price: Mapped[float]
+
+class OrderItem(Base):
+    """Association object with extra data."""
+    __tablename__ = "order_item"
+    
+    order_id: Mapped[int] = mapped_column(
+        ForeignKey("order.id"),
+        primary_key=True
+    )
+    item_id: Mapped[int] = mapped_column(
+        ForeignKey("item.id"),
+        primary_key=True
+    )
+    
+    # Extra data on the relationship
+    quantity: Mapped[int]
+    price_paid: Mapped[float]  # Price at time of purchase
+    
+    # Relationships
+    order: Mapped["Order"] = relationship(back_populates="order_items")
+    item: Mapped["Item"] = relationship()
+```
+
+Using association objects:
+
+```python
+with Session(engine) as session:
+    # Create catalog
+    tshirt = Item(name="T-Shirt", price=19.99)
+    mug = Item(name="Mug", price=12.50)
+    session.add_all([tshirt, mug])
+    session.flush()
+    
+    # Create order with association objects
+    order = Order(customer_name="John Smith")
+    order.order_items.append(OrderItem(item=tshirt, quantity=2, price_paid=19.99))
+    order.order_items.append(OrderItem(item=mug, quantity=1, price_paid=12.50))
+    
+    session.add(order)
+    session.commit()
+    
+    # Query and access
+    order = session.get(Order, order.id)
+    for order_item in order.order_items:
+        print(f"{order_item.item.name}: {order_item.quantity} x ${order_item.price_paid}")
+```
+
+### Association Proxy
+
+Simplify access to related objects through associations:
+
+```python
+from sqlalchemy.ext.associationproxy import association_proxy
+
+class Order(Base):
+    __tablename__ = "order_v2"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_name: Mapped[str] = mapped_column(String(100))
+    
+    order_items: Mapped[List["OrderItemV2"]] = relationship(
+        cascade="all, delete-orphan"
+    )
+    
+    # Proxy to easily access items
+    items = association_proxy("order_items", "item")
+
+class OrderItemV2(Base):
+    __tablename__ = "order_item_v2"
+    
+    order_id: Mapped[int] = mapped_column(ForeignKey("order_v2.id"), primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("item.id"), primary_key=True)
+    quantity: Mapped[int]
+    
+    item: Mapped["Item"] = relationship()
+
+# Usage
+with Session(engine) as session:
+    order = session.get(Order, 1)
+    
+    # Instead of: order.order_items[0].item.name
+    # Use proxy: order.items[0].name
+    for item in order.items:
+        print(item.name)
+```
+
+## Loading Strategies
+
+### Lazy Loading (Default)
+
+Loads related objects on access:
+
+```python
+with Session(engine) as session:
+    dept = session.get(Department, 1)
+    
+    # No query yet for employees
+    print(f"Department: {dept.name}")
+    
+    # Query executes NOW when accessing employees
+    for emp in dept.employees:
+        print(f"  Employee: {emp.name}")
+```
+
+<Warning>
+Lazy loading causes the **N+1 query problem**: one query for the parent, then N queries for each child. Use eager loading to avoid this.
+</Warning>
+
+### Eager Loading with joinedload()
+
+Load related objects using a JOIN in a single query:
+
+```python
+from sqlalchemy.orm import joinedload
+
+with Session(engine) as session:
+    # Load departments with employees in one query
+    stmt = select(Department).options(joinedload(Department.employees))
+    
+    for dept in session.scalars(stmt):
+        print(f"Department: {dept.name}")
+        for emp in dept.employees:  # No additional query!
+            print(f"  Employee: {emp.name}")
+```
+
+<Tip>
+Use `joinedload()` for one-to-one and many-to-one relationships. It uses a LEFT OUTER JOIN.
+</Tip>
+
+### Eager Loading with selectinload()
+
+Load related objects using a separate SELECT IN query:
+
+```python
+from sqlalchemy.orm import selectinload
+
+with Session(engine) as session:
+    # Load departments, then all employees in second query
+    stmt = select(Department).options(selectinload(Department.employees))
+    
+    # Executes 2 queries total:
+    # 1. SELECT * FROM department
+    # 2. SELECT * FROM employee WHERE department_id IN (1, 2, 3, ...)
+    departments = session.scalars(stmt).all()
+    
+    for dept in departments:
+        for emp in dept.employees:  # Already loaded!
+            print(f"{dept.name}: {emp.name}")
+```
+
+<Tip>
+Use `selectinload()` for one-to-many and many-to-many relationships. It's more efficient than `joinedload()` for collections.
+</Tip>
+
+### Comparison: joinedload vs selectinload
+
+<Tabs>
+  <Tab title="joinedload">
+    **Best for:**
+    - One-to-one relationships
+    - Many-to-one relationships
+    - When you need both parent and child in same query
+    
+    **How it works:**
+    - Single query with LEFT OUTER JOIN
+    - Returns all data in one result set
+    - May return duplicate parent rows
+    
+    ```python
+    # One query with JOIN
+    stmt = select(Employee).options(
+        joinedload(Employee.department)
+    )
+    ```
+  </Tab>
+  
+  <Tab title="selectinload">
+    **Best for:**
+    - One-to-many relationships
+    - Many-to-many relationships
+    - Loading collections
+    
+    **How it works:**
+    - Two queries: parent, then children with IN clause
+    - No duplicate parent rows
+    - More efficient for collections
+    
+    ```python
+    # Two queries: Department, then Employee
+    stmt = select(Department).options(
+        selectinload(Department.employees)
+    )
+    ```
+  </Tab>
+</Tabs>
+
+### Nested Eager Loading
+
+Load multiple levels of relationships:
+
+```python
+from sqlalchemy.orm import selectinload, joinedload
+
+with Session(engine) as session:
+    # Load orders with items, and each item's details
+    stmt = (
+        select(Order)
+        .options(
+            selectinload(Order.order_items).joinedload(OrderItem.item)
+        )
+    )
+    
+    for order in session.scalars(stmt):
+        print(f"Order {order.id}:")
+        for order_item in order.order_items:
+            print(f"  {order_item.item.name}: {order_item.quantity}")
+```
+
+### Recursive Eager Loading
+
+For self-referential relationships:
+
+```python
+from sqlalchemy.orm import selectinload
+
+with Session(engine) as session:
+    # Load tree with 4 levels of children
+    stmt = (
+        select(TreeNode)
+        .where(TreeNode.parent_id.is_(None))  # Root nodes
+        .options(selectinload(TreeNode.children, recursion_depth=4))
+    )
+    
+    for root in session.scalars(stmt):
+        print_tree(root)
+
+def print_tree(node: TreeNode, indent: int = 0):
+    print("  " * indent + node.name)
+    for child in node.children.values():
+        print_tree(child, indent + 1)
+```
+
+<Note>
+Set `recursion_depth` to control how many levels deep to load. Without it, only one level is loaded.
+</Note>
+
+### subqueryload() Strategy
+
+Loads related objects using a subquery:
+
+```python
+from sqlalchemy.orm import subqueryload
+
+with Session(engine) as session:
+    # Uses subquery to load employees
+    stmt = select(Department).options(subqueryload(Department.employees))
+    departments = session.scalars(stmt).all()
+```
+
+<Warning>
+`subqueryload()` is deprecated in favor of `selectinload()` which is more efficient in most cases.
+</Warning>
+
+## Lazy Loading Variants
+
+### Configure on Relationship
+
+```python
+class Department(Base):
+    __tablename__ = "dept_v2"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    
+    # Different lazy loading strategies
+    
+    # Default lazy loading
+    employees1: Mapped[List["Employee"]] = relationship(lazy="select")
+    
+    # Joined eager loading (always)
+    employees2: Mapped[List["Employee"]] = relationship(lazy="joined")
+    
+    # Select-in eager loading (always)
+    employees3: Mapped[List["Employee"]] = relationship(lazy="selectin")
+    
+    # Raise error on access (prevents lazy loading)
+    employees4: Mapped[List["Employee"]] = relationship(lazy="raise")
+    
+    # No automatic loading
+    employees5: Mapped[List["Employee"]] = relationship(lazy="noload")
+```
+
+### Preventing Lazy Loading
+
+Avoid N+1 queries by raising errors:
+
+```python
+class Department(Base):
+    __tablename__ = "dept_strict"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    
+    employees: Mapped[List["Employee"]] = relationship(
+        lazy="raise"  # Raises error if not eager loaded
+    )
+
+with Session(engine) as session:
+    dept = session.get(Department, 1)
+    
+    # This will raise an error!
+    # for emp in dept.employees:
+    #     print(emp.name)
+    
+    # Must use eager loading
+    stmt = select(Department).options(selectinload(Department.employees))
+    dept = session.scalars(stmt).first()
+    
+    # Now it works
+    for emp in dept.employees:
+        print(emp.name)
+```
+
+## Cascade Operations
+
+Control how operations cascade to related objects:
+
+### Cascade Options
+
+```python
+class Parent(Base):
+    __tablename__ = "parent"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50))
+    
+    # Common cascade patterns
+    
+    # Full cascade: save, update, delete, refresh, expunge
+    children_all: Mapped[List["Child"]] = relationship(
+        cascade="all, delete-orphan",
+        back_populates="parent"
+    )
+    
+    # Save cascade only
+    children_save: Mapped[List["Child"]] = relationship(
+        cascade="save-update"
+    )
+    
+    # Delete cascade only
+    children_delete: Mapped[List["Child"]] = relationship(
+        cascade="delete"
+    )
+    
+    # No cascade
+    children_none: Mapped[List["Child"]] = relationship(
+        cascade="none"
+    )
+
+class Child(Base):
+    __tablename__ = "child"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int] = mapped_column(ForeignKey("parent.id"))
+    name: Mapped[str] = mapped_column(String(50))
+    
+    parent: Mapped["Parent"] = relationship(back_populates="children_all")
+```
+
+### Delete-Orphan Cascade
+
+Automatically deletes "orphaned" objects:
+
+```python
+class Author(Base):
+    __tablename__ = "author_v2"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    
+    books: Mapped[List["Book"]] = relationship(
+        cascade="all, delete-orphan",
+        back_populates="author"
+    )
+
+class Book(Base):
+    __tablename__ = "book_v2"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    author_id: Mapped[int] = mapped_column(ForeignKey("author_v2.id"))
+    
+    author: Mapped["Author"] = relationship(back_populates="books")
+
+with Session(engine) as session:
+    author = Author(name="Jane Austen")
+    book1 = Book(title="Pride and Prejudice")
+    book2 = Book(title="Sense and Sensibility")
+    
+    author.books.extend([book1, book2])
+    session.add(author)
+    session.commit()
+    
+    # Remove book from collection - it becomes an orphan
+    author.books.remove(book1)
+    session.commit()  # book1 is deleted from database!
+```
+
+<Warning>
+Use `delete-orphan` carefully. Objects removed from the collection are permanently deleted, not just unlinked.
+</Warning>
+
+## Working with Collections
+
+### List Collections (Default)
+
+```python
+class User(Base):
+    __tablename__ = "user"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    
+    addresses: Mapped[List["Address"]] = relationship()
+
+with Session(engine) as session:
+    user = session.get(User, 1)
+    
+    # List operations
+    user.addresses.append(Address(email="new@example.com"))
+    user.addresses.extend([Address(email="a@x.com"), Address(email="b@x.com")])
+    user.addresses.remove(user.addresses[0])
+    user.addresses.pop()
+```
+
+### Set Collections
+
+```python
+from typing import Set
+
+class Article(Base):
+    __tablename__ = "article"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    
+    tags: Mapped[Set["Tag"]] = relationship(
+        secondary=article_tag_table,
+        collection_class=set
+    )
+
+with Session(engine) as session:
+    article = session.get(Article, 1)
+    
+    # Set operations
+    article.tags.add(Tag(name="python"))
+    article.tags.update([Tag(name="sql"), Tag(name="database")])
+    article.tags.discard(some_tag)
+```
+
+### Dictionary Collections
+
+```python
+from typing import Dict
+from sqlalchemy.orm.collections import attribute_keyed_dict
+
+class Company(Base):
+    __tablename__ = "company"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    
+    # Dictionary keyed by employee name
+    employees_by_name: Mapped[Dict[str, "Employee"]] = relationship(
+        collection_class=attribute_keyed_dict("name")
+    )
+
+with Session(engine) as session:
+    company = session.get(Company, 1)
+    
+    # Dictionary access
+    alice = company.employees_by_name["Alice"]
+    company.employees_by_name["Bob"] = Employee(name="Bob")
+    del company.employees_by_name["Charlie"]
+```
+
+## Advanced Relationship Patterns
+
+### Polymorphic Relationships
+
+Relationships with inheritance:
+
+```python
+class Company(Base):
+    __tablename__ = "company_v2"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    
+    employees: Mapped[List["Person"]] = relationship()
+
+class Person(Base):
+    __tablename__ = "person"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company_v2.id"))
+    name: Mapped[str] = mapped_column(String(100))
+    type: Mapped[str] = mapped_column(String(50))
+    
+    __mapper_args__ = {
+        "polymorphic_on": type,
+        "polymorphic_identity": "person"
+    }
+
+class Engineer(Person):
+    __tablename__ = "engineer"
+    
+    id: Mapped[int] = mapped_column(ForeignKey("person.id"), primary_key=True)
+    engineer_name: Mapped[str] = mapped_column(String(100))
+    
+    __mapper_args__ = {"polymorphic_identity": "engineer"}
+
+class Manager(Person):
+    __tablename__ = "manager"
+    
+    id: Mapped[int] = mapped_column(ForeignKey("person.id"), primary_key=True)
+    manager_name: Mapped[str] = mapped_column(String(100))
+    
+    __mapper_args__ = {"polymorphic_identity": "manager"}
+
+with Session(engine) as session:
+    company = session.get(Company, 1)
+    
+    # Collection contains mixed types
+    for employee in company.employees:
+        if isinstance(employee, Engineer):
+            print(f"Engineer: {employee.engineer_name}")
+        elif isinstance(employee, Manager):
+            print(f"Manager: {employee.manager_name}")
+```
+
+### Composite Foreign Keys
+
+```python
+class Order(Base):
+    __tablename__ = "order_v3"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(primary_key=True)
+    total: Mapped[float]
+    
+    items: Mapped[List["OrderItem"]] = relationship()
+
+class OrderItem(Base):
+    __tablename__ = "order_item_v3"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int]
+    customer_id: Mapped[int]
+    
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["order_id", "customer_id"],
+            ["order_v3.id", "order_v3.customer_id"]
+        ),
+    )
+    
+    order: Mapped["Order"] = relationship(
+        foreign_keys=[order_id, customer_id]
+    )
+```
+
+## Complete Example: Blog System
+
+```python
+from typing import List, Optional
+from datetime import datetime
+from sqlalchemy import create_engine, String, Text, DateTime, ForeignKey, Table, Column
+from sqlalchemy import func, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+from sqlalchemy.orm import selectinload, joinedload
+
+class Base(DeclarativeBase):
+    pass
+
+# Many-to-many for tags
+post_tag = Table(
+    "post_tag",
+    Base.metadata,
+    Column("post_id", ForeignKey("post.id"), primary_key=True),
+    Column("tag_id", ForeignKey("tag.id"), primary_key=True)
+)
+
+class User(Base):
+    __tablename__ = "user_blog"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True)
+    email: Mapped[str] = mapped_column(String(100))
+    
+    posts: Mapped[List["Post"]] = relationship(
+        back_populates="author",
+        cascade="all, delete-orphan"
+    )
+    comments: Mapped[List["Comment"]] = relationship(
+        back_populates="author"
+    )
+
+class Post(Base):
+    __tablename__ = "post"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    author_id: Mapped[int] = mapped_column(ForeignKey("user_blog.id"))
+    
+    author: Mapped["User"] = relationship(back_populates="posts")
+    comments: Mapped[List["Comment"]] = relationship(
+        back_populates="post",
+        cascade="all, delete-orphan",
+        order_by="Comment.created_at"
+    )
+    tags: Mapped[List["Tag"]] = relationship(
+        secondary=post_tag,
+        back_populates="posts"
+    )
+
+class Comment(Base):
+    __tablename__ = "comment"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    post_id: Mapped[int] = mapped_column(ForeignKey("post.id"))
+    author_id: Mapped[int] = mapped_column(ForeignKey("user_blog.id"))
+    
+    post: Mapped["Post"] = relationship(back_populates="comments")
+    author: Mapped["User"] = relationship(back_populates="comments")
+
+class Tag(Base):
+    __tablename__ = "tag"
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True)
+    
+    posts: Mapped[List["Post"]] = relationship(
+        secondary=post_tag,
+        back_populates="tags"
+    )
+
+engine = create_engine("sqlite://", echo=True)
+Base.metadata.create_all(engine)
+
+# Create sample data
+with Session(engine) as session:
+    # Users
+    alice = User(username="alice", email="alice@blog.com")
+    bob = User(username="bob", email="bob@blog.com")
+    
+    # Tags
+    python_tag = Tag(name="Python")
+    sql_tag = Tag(name="SQL")
+    tutorial_tag = Tag(name="Tutorial")
+    
+    # Posts with nested relationships
+    post1 = Post(
+        title="Getting Started with SQLAlchemy",
+        content="Here's how to use SQLAlchemy...",
+        author=alice,
+        tags=[python_tag, sql_tag, tutorial_tag],
+        comments=[
+            Comment(content="Great tutorial!", author=bob),
+            Comment(content="Very helpful, thanks!", author=bob)
+        ]
+    )
+    
+    post2 = Post(
+        title="Advanced ORM Patterns",
+        content="Let's explore advanced patterns...",
+        author=alice,
+        tags=[python_tag, sql_tag]
+    )
+    
+    session.add_all([post1, post2])
+    session.commit()
+
+# Efficient querying with eager loading
+with Session(engine) as session:
+    # Load posts with all related data in 4 queries total:
+    # 1. Posts, 2. Authors (joined), 3. Comments, 4. Tags
+    stmt = (
+        select(Post)
+        .options(
+            joinedload(Post.author),
+            selectinload(Post.comments).joinedload(Comment.author),
+            selectinload(Post.tags)
+        )
+        .order_by(Post.created_at.desc())
+    )
+    
+    for post in session.scalars(stmt):
+        print(f"\n{post.title} by {post.author.username}")
+        print(f"Tags: {', '.join(tag.name for tag in post.tags)}")
+        print(f"Comments ({len(post.comments)}):")
+        for comment in post.comments:
+            print(f"  - {comment.author.username}: {comment.content}")
+```
+
+## Next Steps
+
+Congratulations! You've completed the SQLAlchemy tutorials. Continue learning:
+
+<CardGroup cols={2}>
+  <Card title="API Reference" icon="book">
+    Explore the complete SQLAlchemy API documentation
+  </Card>
+  
+  <Card title="Advanced Topics" icon="graduation-cap">
+    Learn about async SQLAlchemy, custom types, and hybrid properties
+  </Card>
+</CardGroup>
+
+## Key Takeaways
+
+- Use `back_populates` for bidirectional relationships
+- `joinedload()` for to-one, `selectinload()` for to-many
+- Set `lazy="raise"` to prevent N+1 queries
+- Use `cascade="all, delete-orphan"` for parent-child relationships
+- Association objects add extra data to many-to-many relationships
+- Always consider loading strategies to optimize query performance
+- Collections can be lists, sets, or dictionaries based on your needs

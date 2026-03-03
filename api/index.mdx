@@ -1,0 +1,80 @@
+---
+title: API reference
+description: Complete API reference for SQLAlchemy
+---
+
+Welcome to the SQLAlchemy API reference documentation. This section provides comprehensive documentation for all public APIs.
+
+## API Modules
+
+<CardGroup cols={2}>
+  <Card title="ORM API" icon="diagram-project" href="/api/orm">
+    Session, declarative base, relationships, and ORM utilities
+  </Card>
+  <Card title="Core SQL" icon="code" href="/api/core">
+    SQL expression language: select, insert, update, delete
+  </Card>
+  <Card title="Engine" icon="database" href="/api/engine">
+    Engine, Connection, Result, and execution APIs
+  </Card>
+  <Card title="Schema" icon="table" href="/api/schema">
+    MetaData, Table, Column, and constraints
+  </Card>
+  <Card title="Types" icon="hashtag" href="/api/types">
+    Data types: Integer, String, DateTime, and custom types
+  </Card>
+  <Card title="Connection Pool" icon="layer-group" href="/api/pool">
+    Connection pooling strategies and configuration
+  </Card>
+  <Card title="Dialects" icon="plug" href="/api/dialects">
+    Database dialect system and dialect-specific APIs
+  </Card>
+  <Card title="Events" icon="bolt" href="/api/events">
+    Event system and listeners
+  </Card>
+</CardGroup>
+
+## Quick Links
+
+### Most Used APIs
+
+**Engine & Connection:**
+- `create_engine()` - Create a database engine
+- `Engine.connect()` - Get a connection
+- `Connection.execute()` - Execute statements
+
+**ORM:**
+- `Session` - ORM session for persistence
+- `DeclarativeBase` - Base class for mapped classes
+- `relationship()` - Define relationships
+- `mapped_column()` - Define mapped columns
+
+**Core SQL:**
+- `select()` - Build SELECT statements
+- `insert()` - Build INSERT statements  
+- `update()` - Build UPDATE statements
+- `delete()` - Build DELETE statements
+
+**Schema:**
+- `MetaData` - Schema metadata container
+- `Table` - Table definition
+- `Column` - Column definition
+
+## API Conventions
+
+<Note>
+All public APIs are exported from the top-level `sqlalchemy` package. Import them directly:
+
+```python
+from sqlalchemy import create_engine, select, Column, Integer
+from sqlalchemy.orm import Session, DeclarativeBase, relationship
+```
+</Note>
+
+## Version Information
+
+This documentation covers SQLAlchemy 2.0+. For information on migrating from 1.x, see the official migration guide.
+
+<Warning>
+Some APIs marked as deprecated in 2.0 will be removed in future versions. Use modern alternatives where indicated.
+</Warning>

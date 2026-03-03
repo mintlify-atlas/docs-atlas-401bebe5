@@ -1,0 +1,434 @@
+---
+title: 'Expression API'
+description: 'Building SQL expressions programmatically with SQLAlchemy Core'
+---
+
+# Expression API
+
+The SQL Expression Language provides a system for constructing SQL statements using Python expressions. All constructs are defined in `sqlalchemy.sql.expression`.
+
+## Core Expression Functions
+
+### Column References
+
+```python
+from sqlalchemy import column, table
+
+# Standalone column reference
+name_col = column('name')
+email_col = column('email', String)
+
+# Table with columns
+users = table('users',
+    column('id'),
+    column('name'),
+    column('email')
+)
+```
+
+<ParamField path="column" type="function">
+  **Signature:** `column(text: str, type_: Optional[TypeEngine] = None) -> ColumnClause`
+  
+  Creates a standalone column reference without requiring a full Table definition.
+</ParamField>
+
+### Literal Values
+
+```python
+from sqlalchemy import literal, literal_column
+
+# Literal value with type inference
+stmt = select(literal(123))  # SELECT 123
+stmt = select(literal('hello'))  # SELECT 'hello'
+
+# Literal SQL fragment (use with caution)
+stmt = select(literal_column('COUNT(*)'))
+```
+
+<Note>
+  Use `literal()` for safe, typed values. Only use `literal_column()` when you need raw SQL fragments.
+</Note>
+
+### Boolean Operations
+
+<Tabs>
+  <Tab title="and_() / or_()">
+    ```python
+    from sqlalchemy import and_, or_, not_
+    
+    # AND combination
+    stmt = select(users).where(
+        and_(
+            users.c.age >= 18,
+            users.c.country == 'US',
+            users.c.active == True
+        )
+    )
+    # WHERE age >= 18 AND country = 'US' AND active = true
+    
+    # OR combination
+    stmt = select(users).where(
+        or_(
+            users.c.role == 'admin',
+            users.c.role == 'moderator'
+        )
+    )
+    # WHERE role = 'admin' OR role = 'moderator'
+    
+    # NOT negation
+    stmt = select(users).where(
+        not_(users.c.banned)
+    )
+    # WHERE NOT banned
+    ```
+  </Tab>
+  
+  <Tab title="Python Operators">
+    ```python
+    # Using & (and), | (or), ~ (not)
+    stmt = select(users).where(
+        (users.c.age >= 18) & (users.c.country == 'US')
+    )
+    
+    stmt = select(users).where(
+        (users.c.role == 'admin') | (users.c.role == 'moderator')
+    )
+    
+    stmt = select(users).where(
+        ~users.c.banned
+    )
+    ```
+    
+    <Note>
+      Parentheses are required when using Python operators due to precedence rules.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Comparison Operations
+
+### Standard Comparisons
+
+```python
+from sqlalchemy import select
+
+# Equality
+stmt = select(users).where(users.c.name == 'alice')
+
+# Inequality
+stmt = select(users).where(users.c.status != 'deleted')
+
+# Numeric comparisons
+stmt = select(users).where(users.c.age >= 18)
+stmt = select(users).where(users.c.score < 100)
+```
+
+### Advanced Comparisons
+
+<CodeGroup>
+```python LIKE / ILIKE
+# Case-sensitive pattern matching
+stmt = select(users).where(users.c.name.like('A%'))
+
+# Case-insensitive (PostgreSQL)
+stmt = select(users).where(users.c.name.ilike('%alice%'))
+
+# NOT LIKE
+stmt = select(users).where(users.c.name.notlike('test%'))
+```
+
+```python IN / NOT IN
+# IN clause
+stmt = select(users).where(
+    users.c.status.in_(['active', 'pending', 'verified'])
+)
+
+# NOT IN
+stmt = select(users).where(
+    users.c.role.not_in(['banned', 'deleted'])
+)
+
+# IN with subquery
+subq = select(orders.c.user_id).where(orders.c.total > 1000)
+stmt = select(users).where(users.c.id.in_(subq))
+```
+
+```python BETWEEN
+from sqlalchemy import between
+
+# BETWEEN clause
+stmt = select(products).where(
+    between(products.c.price, 10, 100)
+)
+
+# Method syntax
+stmt = select(products).where(
+    products.c.price.between(10, 100)
+)
+```
+
+```python NULL Checks
+# IS NULL
+stmt = select(users).where(users.c.deleted_at.is_(None))
+stmt = select(users).where(users.c.deleted_at == None)
+
+# IS NOT NULL
+stmt = select(users).where(users.c.deleted_at.is_not(None))
+stmt = select(users).where(users.c.deleted_at != None)
+```
+</CodeGroup>
+
+## Functions and Operators
+
+### SQL Functions
+
+```python
+from sqlalchemy import func
+
+# Aggregate functions
+stmt = select(func.count(users.c.id))
+stmt = select(func.sum(orders.c.amount))
+stmt = select(func.avg(products.c.price))
+stmt = select(func.max(scores.c.value))
+stmt = select(func.min(temperatures.c.celsius))
+
+# String functions
+stmt = select(func.upper(users.c.name))
+stmt = select(func.lower(users.c.email))
+stmt = select(func.concat(users.c.first_name, ' ', users.c.last_name))
+
+# Date/time functions
+stmt = select(func.now())
+stmt = select(func.current_date())
+stmt = select(func.date_trunc('day', orders.c.created_at))
+```
+
+<ParamField path="func" type="dynamic">
+  `func` is a dynamic attribute namespace that generates SQL functions. Any attribute access on `func` creates a function call.
+  
+  ```python
+  func.my_custom_function(arg1, arg2)  # my_custom_function(arg1, arg2)
+  ```
+</ParamField>
+
+### Type Casting
+
+```python
+from sqlalchemy import cast, type_coerce
+
+# Explicit CAST
+stmt = select(
+    cast(users.c.age, String)
+)
+# SELECT CAST(users.age AS VARCHAR)
+
+# Type coercion (Python-side only)
+stmt = select(
+    type_coerce(users.c.metadata, JSON)
+)
+```
+
+### CASE Expressions
+
+```python
+from sqlalchemy import case
+
+# Simple CASE
+stmt = select(
+    case(
+        (users.c.age < 18, 'minor'),
+        (users.c.age < 65, 'adult'),
+        else_='senior'
+    ).label('age_group')
+)
+
+# CASE with value
+stmt = select(
+    case(
+        {'active': 1, 'pending': 2, 'deleted': 3},
+        value=users.c.status,
+        else_=0
+    ).label('status_code')
+)
+```
+
+## Labels and Aliases
+
+### Column Labels
+
+```python
+# Using .label()
+stmt = select(
+    users.c.name.label('user_name'),
+    func.count(orders.c.id).label('order_count')
+)
+
+# Accessing labeled columns
+result = conn.execute(stmt)
+for row in result:
+    print(row.user_name, row.order_count)
+```
+
+### Ordering and Sorting
+
+```python
+from sqlalchemy import asc, desc, nulls_first, nulls_last
+
+# ORDER BY ascending
+stmt = select(users).order_by(users.c.name)
+stmt = select(users).order_by(asc(users.c.name))
+
+# ORDER BY descending
+stmt = select(users).order_by(desc(users.c.created_at))
+
+# Multiple columns
+stmt = select(users).order_by(
+    users.c.last_name,
+    users.c.first_name
+)
+
+# NULL handling
+stmt = select(users).order_by(
+    nulls_first(users.c.optional_field)
+)
+stmt = select(users).order_by(
+    nulls_last(desc(users.c.score))
+)
+```
+
+## Bind Parameters
+
+```python
+from sqlalchemy import bindparam
+
+# Named parameters
+stmt = select(users).where(
+    users.c.name == bindparam('user_name')
+)
+
+# Execute with values
+result = conn.execute(stmt, {'user_name': 'alice'})
+
+# Multiple executions
+stmt = users.insert().values(
+    name=bindparam('n'),
+    email=bindparam('e')
+)
+
+conn.execute(stmt, [
+    {'n': 'alice', 'e': 'alice@example.com'},
+    {'n': 'bob', 'e': 'bob@example.com'},
+    {'n': 'charlie', 'e': 'charlie@example.com'}
+])
+```
+
+## Text Fragments
+
+```python
+from sqlalchemy import text
+
+# Raw SQL text
+stmt = text("SELECT * FROM users WHERE name = :name")
+result = conn.execute(stmt, {'name': 'alice'})
+
+# Mixing text with expressions
+from sqlalchemy import select
+
+stmt = select(users).where(
+    text("users.name = :name")
+).params(name='alice')
+
+# Text columns in SELECT
+stmt = select(
+    users.c.id,
+    text("users.first_name || ' ' || users.last_name AS full_name")
+)
+```
+
+<Note>
+  Use `text()` only when necessary. The expression API is type-safe and prevents SQL injection.
+</Note>
+
+## Window Functions
+
+```python
+from sqlalchemy import over
+
+# ROW_NUMBER()
+stmt = select(
+    users.c.name,
+    func.row_number().over(
+        order_by=users.c.created_at
+    ).label('row_num')
+)
+
+# PARTITION BY
+stmt = select(
+    orders.c.user_id,
+    orders.c.amount,
+    func.rank().over(
+        partition_by=orders.c.user_id,
+        order_by=desc(orders.c.amount)
+    ).label('amount_rank')
+)
+
+# Window with frame clause
+from sqlalchemy import over
+
+stmt = select(
+    sales.c.date,
+    sales.c.amount,
+    func.sum(sales.c.amount).over(
+        order_by=sales.c.date,
+        rows=(None, 0)  # ROWS UNBOUNDED PRECEDING TO CURRENT ROW
+    ).label('running_total')
+)
+```
+
+## Common Patterns
+
+### Dynamic Query Building
+
+```python
+def build_user_query(filters):
+    stmt = select(users)
+    
+    if filters.get('name'):
+        stmt = stmt.where(users.c.name.like(f"%{filters['name']}%"))
+    
+    if filters.get('min_age'):
+        stmt = stmt.where(users.c.age >= filters['min_age'])
+    
+    if filters.get('status'):
+        stmt = stmt.where(users.c.status.in_(filters['status']))
+    
+    return stmt
+
+# Usage
+stmt = build_user_query({'name': 'alice', 'min_age': 18})
+```
+
+### Reusable Criteria
+
+```python
+# Define reusable conditions
+active_users = users.c.status == 'active'
+adult_users = users.c.age >= 18
+verified_users = users.c.verified == True
+
+# Combine in queries
+stmt = select(users).where(and_(active_users, adult_users))
+stmt = select(users).where(active_users & verified_users)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="SELECT Statements" href="/core/selects">
+    Learn about joins, subqueries, and CTEs
+  </Card>
+  
+  <Card title="INSERT/UPDATE/DELETE" href="/core/inserts-updates-deletes">
+    Master data manipulation statements
+  </Card>
+</CardGroup>

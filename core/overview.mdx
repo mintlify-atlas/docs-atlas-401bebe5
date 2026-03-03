@@ -1,0 +1,219 @@
+---
+title: 'Core SQL Overview'
+description: 'Understanding SQLAlchemy Core and when to use it over ORM'
+---
+
+# Core SQL Overview
+
+SQLAlchemy Core is the foundational SQL toolkit that provides a Pythonic way to construct and execute SQL statements. It sits below the ORM layer and can be used independently for complete database interaction.
+
+## Architecture
+
+<Steps>
+  <Step title="SQL Expression Language">
+    Construct SQL statements using Python objects and methods rather than raw SQL strings.
+  </Step>
+  
+  <Step title="Schema Definition">
+    Define database tables, columns, and constraints programmatically with metadata objects.
+  </Step>
+  
+  <Step title="Type System">
+    Map Python types to database types with automatic conversion and validation.
+  </Step>
+  
+  <Step title="Engine & Connection">
+    Manage database connections, connection pooling, and statement execution.
+  </Step>
+</Steps>
+
+## Core vs ORM
+
+<Tabs>
+  <Tab title="When to Use Core">
+    ### Use Core When:
+    
+    - Building complex, performance-critical queries
+    - Working with bulk operations
+    - Need fine-grained control over SQL generation
+    - Building data pipelines or ETL processes
+    - Creating migration scripts
+    - Working with database schemas directly
+    
+    ```python
+    from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, select
+    
+    # Direct table definition
+    metadata = MetaData()
+    users = Table('users', metadata,
+        Column('id', Integer, primary_key=True),
+        Column('name', String(50)),
+        Column('email', String(100))
+    )
+    
+    # Explicit query construction
+    stmt = select(users).where(users.c.name == 'alice')
+    
+    with engine.connect() as conn:
+        result = conn.execute(stmt)
+        for row in result:
+            print(row)
+    ```
+  </Tab>
+  
+  <Tab title="When to Use ORM">
+    ### Use ORM When:
+    
+    - Building application business logic
+    - Need object-relational mapping
+    - Want automatic relationship management
+    - Prefer working with Python objects over rows
+    - Need unit of work pattern
+    - Building CRUD applications
+    
+    ```python
+    from sqlalchemy.orm import DeclarativeBase, Session, Mapped, mapped_column
+    
+    class Base(DeclarativeBase):
+        pass
+    
+    class User(Base):
+        __tablename__ = 'users'
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str] = mapped_column(String(50))
+        email: Mapped[str] = mapped_column(String(100))
+    
+    with Session(engine) as session:
+        user = session.query(User).filter_by(name='alice').first()
+        print(user.email)
+    ```
+  </Tab>
+</Tabs>
+
+## Core Components
+
+### Expression Language
+
+The SQL Expression Language constructs SQL statements programmatically:
+
+```python
+from sqlalchemy import select, and_, or_
+
+# SELECT with conditions
+stmt = (
+    select(users.c.name, users.c.email)
+    .where(
+        and_(
+            users.c.name.like('A%'),
+            users.c.email.contains('@example.com')
+        )
+    )
+    .order_by(users.c.name)
+)
+```
+
+<Note>
+  All SQL expressions are lazy - they only generate SQL when executed or compiled.
+</Note>
+
+### Schema Definition
+
+Define database structure using Python:
+
+```python
+from sqlalchemy import MetaData, Table, Column, Integer, String, ForeignKey
+
+metadata = MetaData()
+
+users = Table('users', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(50), nullable=False),
+    Column('email', String(100), unique=True)
+)
+
+orders = Table('orders', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('user_id', Integer, ForeignKey('users.id')),
+    Column('amount', Integer)
+)
+
+# Create all tables
+metadata.create_all(engine)
+```
+
+### Type System
+
+Map between Python and SQL types:
+
+```python
+from sqlalchemy import String, Integer, DateTime, Boolean, Numeric
+from datetime import datetime
+
+table = Table('products', metadata,
+    Column('id', Integer),
+    Column('name', String(100)),
+    Column('price', Numeric(10, 2)),
+    Column('in_stock', Boolean, default=True),
+    Column('created_at', DateTime, default=datetime.utcnow)
+)
+```
+
+### Engine & Connections
+
+Manage database connectivity:
+
+```python
+from sqlalchemy import create_engine
+
+# Create engine with connection pool
+engine = create_engine(
+    'postgresql://user:pass@localhost/db',
+    pool_size=10,
+    max_overflow=20
+)
+
+# Execute statements
+with engine.connect() as conn:
+    result = conn.execute(stmt)
+    conn.commit()
+```
+
+## Key Advantages
+
+<CardGroup cols={2}>
+  <Card title="Performance" icon="gauge">
+    Fine-grained control over query generation and execution for optimal performance.
+  </Card>
+  
+  <Card title="Explicit" icon="code">
+    Clear, explicit SQL generation with no hidden magic or automatic behaviors.
+  </Card>
+  
+  <Card title="Flexible" icon="wand-magic-sparkles">
+    Works with any table structure without requiring class definitions.
+  </Card>
+  
+  <Card title="Portable" icon="database">
+    Write database-agnostic code that works across PostgreSQL, MySQL, SQLite, and more.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Expression API" href="/core/expression-api">
+    Learn how to build SQL expressions programmatically
+  </Card>
+  
+  <Card title="SELECT Statements" href="/core/selects">
+    Master queries, joins, and subqueries
+  </Card>
+  
+  <Card title="Schema Definition" href="/core/schema-table">
+    Define tables and metadata
+  </Card>
+  
+  <Card title="Engine Setup" href="/core/engines">
+    Configure database connections
+  </Card>
+</CardGroup>

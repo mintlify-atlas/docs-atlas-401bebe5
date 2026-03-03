@@ -1,0 +1,599 @@
+---
+title: 'Standard Types'
+description: 'Integer, String, DateTime, Boolean, Numeric, and other built-in types'
+---
+
+# Standard Types
+
+SQLAlchemy provides a comprehensive set of built-in types that work across all major database backends.
+
+## Numeric Types
+
+### Integer Types
+
+<Tabs>
+  <Tab title="Integer">
+    ```python
+    from sqlalchemy import Integer
+    
+    # Standard integer (usually 32-bit)
+    Column('id', Integer, primary_key=True)
+    Column('count', Integer, default=0)
+    Column('quantity', Integer, nullable=False)
+    
+    # Maps to:
+    # - PostgreSQL: INTEGER
+    # - MySQL: INT
+    # - SQLite: INTEGER
+    # - SQL Server: INT
+    
+    # Python type: int
+    # Range: -2,147,483,648 to 2,147,483,647
+    ```
+  </Tab>
+  
+  <Tab title="BigInteger">
+    ```python
+    from sqlalchemy import BigInteger
+    
+    # 64-bit integer
+    Column('big_id', BigInteger, primary_key=True)
+    Column('total_views', BigInteger, default=0)
+    
+    # Maps to:
+    # - PostgreSQL: BIGINT
+    # - MySQL: BIGINT
+    # - SQLite: INTEGER
+    # - SQL Server: BIGINT
+    
+    # Python type: int
+    # Range: -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807
+    ```
+  </Tab>
+  
+  <Tab title="SmallInteger">
+    ```python
+    from sqlalchemy import SmallInteger
+    
+    # 16-bit integer
+    Column('age', SmallInteger)
+    Column('priority', SmallInteger, default=0)
+    
+    # Maps to:
+    # - PostgreSQL: SMALLINT
+    # - MySQL: SMALLINT
+    # - SQLite: INTEGER
+    # - SQL Server: SMALLINT
+    
+    # Python type: int
+    # Range: -32,768 to 32,767
+    ```
+  </Tab>
+</Tabs>
+
+### Floating Point Types
+
+```python
+from sqlalchemy import Float, REAL, DOUBLE_PRECISION
+
+# Standard float
+Column('score', Float)
+Column('rating', Float(precision=53))  # Double precision
+
+# SQL type literals
+Column('value', REAL)  # Single precision
+Column('measurement', DOUBLE_PRECISION)  # Double precision
+
+# Python type: float
+```
+
+<Note>
+  Use `Numeric` for money and exact decimal values. Use `Float` only for scientific or approximate values.
+</Note>
+
+### Decimal/Numeric Types
+
+```python
+from sqlalchemy import Numeric, DECIMAL
+
+# Exact decimal numbers
+Column('price', Numeric(10, 2))  # 10 digits total, 2 decimal places
+Column('tax_rate', Numeric(5, 4))  # 0.0000 to 9.9999
+Column('balance', Numeric(12, 2))  # Up to 9,999,999,999.99
+
+# DECIMAL is an alias
+Column('amount', DECIMAL(10, 2))
+
+# Python type: decimal.Decimal
+```
+
+**Parameters:**
+- `precision`: Total number of digits
+- `scale`: Number of decimal places
+- `asdecimal`: If True (default), return Python `Decimal`; if False, return `float`
+
+```python
+# Return as float instead of Decimal
+Column('approximate', Numeric(10, 2, asdecimal=False))
+```
+
+## String Types
+
+### String and VARCHAR
+
+```python
+from sqlalchemy import String, VARCHAR, NVARCHAR
+
+# Variable-length string
+Column('name', String(50))  # Max 50 characters
+Column('email', String(100))
+Column('username', String(30))
+
+# SQL literal
+Column('title', VARCHAR(200))
+
+# Unicode string (SQL Server, Oracle)
+Column('unicode_text', NVARCHAR(100))
+
+# Python type: str
+```
+
+<ParamField path="String" type="class">
+  **Signature:** `String(length: Optional[int] = None, collation: Optional[str] = None)`
+  
+  - `length`: Maximum character length
+  - `collation`: Database collation (e.g., 'utf8mb4_unicode_ci')
+</ParamField>
+
+### Text Types
+
+```python
+from sqlalchemy import Text, UnicodeText, CLOB
+
+# Unlimited text
+Column('bio', Text)  # No length limit
+Column('content', Text)
+Column('description', Text(collation='utf8mb4_unicode_ci'))
+
+# Unicode text
+Column('unicode_content', UnicodeText)
+
+# CLOB (Character Large Object)
+Column('large_text', CLOB)
+
+# Python type: str
+
+# Maps to:
+# - PostgreSQL: TEXT
+# - MySQL: TEXT
+# - SQLite: TEXT
+# - SQL Server: VARCHAR(MAX) or TEXT
+```
+
+### CHAR (Fixed Length)
+
+```python
+from sqlalchemy import CHAR, NCHAR
+
+# Fixed-length string
+Column('country_code', CHAR(2))  # Always 2 characters
+Column('state_code', CHAR(2))
+Column('status_code', CHAR(1))
+
+# Unicode fixed-length
+Column('unicode_code', NCHAR(10))
+
+# Python type: str
+```
+
+## Boolean Type
+
+```python
+from sqlalchemy import Boolean
+
+# Boolean values
+Column('is_active', Boolean, default=True)
+Column('is_verified', Boolean, default=False)
+Column('is_deleted', Boolean, nullable=False, default=False)
+
+# Python type: bool
+
+# Maps to:
+# - PostgreSQL: BOOLEAN
+# - MySQL: BOOL (TINYINT(1))
+# - SQLite: BOOLEAN (INTEGER 0/1)
+# - SQL Server: BIT
+
+# Values: True/False, 1/0, 'true'/'false'
+```
+
+**Database Behavior:**
+```python
+# PostgreSQL: true/false
+# MySQL: 1/0
+# SQLite: 1/0
+# SQL Server: 1/0
+
+# SQLAlchemy handles conversion automatically
+with engine.begin() as conn:
+    conn.execute(
+        users.insert().values(is_active=True)  # Converts to appropriate value
+    )
+    
+    result = conn.execute(select(users.c.is_active))
+    value = result.scalar()  # Returns Python bool
+    print(type(value))  # <class 'bool'>
+```
+
+## Date and Time Types
+
+### DateTime
+
+```python
+from sqlalchemy import DateTime
+from datetime import datetime
+
+# Timestamp with or without timezone
+Column('created_at', DateTime, default=datetime.utcnow)
+Column('updated_at', DateTime, onupdate=datetime.utcnow)
+
+# With timezone support
+Column('event_time', DateTime(timezone=True))
+
+# Without timezone (default)
+Column('local_time', DateTime(timezone=False))
+
+# Python type: datetime.datetime
+
+# Maps to:
+# - PostgreSQL: TIMESTAMP (timezone=False) or TIMESTAMPTZ (timezone=True)
+# - MySQL: DATETIME
+# - SQLite: TEXT or REAL (depending on storage)
+# - SQL Server: DATETIME2
+```
+
+### Date
+
+```python
+from sqlalchemy import Date
+from datetime import date
+
+# Date only (no time)
+Column('birth_date', Date)
+Column('start_date', Date, nullable=False)
+Column('end_date', Date)
+
+# Python type: datetime.date
+
+# Maps to:
+# - PostgreSQL: DATE
+# - MySQL: DATE
+# - SQLite: TEXT or REAL
+# - SQL Server: DATE
+```
+
+### Time
+
+```python
+from sqlalchemy import Time
+from datetime import time
+
+# Time only (no date)
+Column('start_time', Time)
+Column('end_time', Time(timezone=True))
+
+# Python type: datetime.time
+
+# Maps to:
+# - PostgreSQL: TIME or TIMETZ (with timezone)
+# - MySQL: TIME
+# - SQLite: TEXT or REAL
+# - SQL Server: TIME
+```
+
+### Interval
+
+```python
+from sqlalchemy import Interval
+from datetime import timedelta
+
+# Time interval/duration
+Column('duration', Interval)
+Column('timeout', Interval, default=timedelta(minutes=30))
+
+# Python type: datetime.timedelta
+
+# Supported by:
+# - PostgreSQL: INTERVAL
+# - Oracle: INTERVAL
+# - Others: May use integer (seconds) or other representation
+```
+
+## Binary Types
+
+### LargeBinary
+
+```python
+from sqlalchemy import LargeBinary, BLOB, VARBINARY
+
+# Binary data
+Column('avatar', LargeBinary)
+Column('file_data', LargeBinary(length=1000000))  # ~1MB
+
+# SQL literals
+Column('image', BLOB)
+Column('binary_data', VARBINARY(1024))
+
+# Python type: bytes
+
+# Maps to:
+# - PostgreSQL: BYTEA
+# - MySQL: BLOB or LONGBLOB
+# - SQLite: BLOB
+# - SQL Server: VARBINARY(MAX)
+```
+
+**Usage:**
+```python
+# Store binary data
+with open('image.png', 'rb') as f:
+    image_data = f.read()
+
+with engine.begin() as conn:
+    conn.execute(
+        users.insert().values(avatar=image_data)
+    )
+
+# Retrieve binary data
+with engine.connect() as conn:
+    result = conn.execute(select(users.c.avatar))
+    avatar = result.scalar()
+    
+    with open('output.png', 'wb') as f:
+        f.write(avatar)
+```
+
+## JSON Types
+
+### JSON
+
+```python
+from sqlalchemy import JSON
+import json
+
+# JSON data
+Column('metadata', JSON)
+Column('settings', JSON)
+Column('data', JSON, nullable=True)
+
+# Python type: dict, list, or any JSON-serializable type
+
+# Maps to:
+# - PostgreSQL: JSON
+# - MySQL 5.7+: JSON
+# - SQLite: TEXT (stored as JSON string)
+# - SQL Server 2016+: NVARCHAR(MAX) with JSON validation
+```
+
+**Usage:**
+```python
+# Insert JSON data
+with engine.begin() as conn:
+    conn.execute(
+        users.insert().values(
+            metadata={
+                'preferences': {'theme': 'dark'},
+                'tags': ['admin', 'verified']
+            }
+        )
+    )
+
+# Query JSON data
+result = conn.execute(select(users.c.metadata))
+data = result.scalar()
+print(type(data))  # <class 'dict'>
+
+# JSON operators (PostgreSQL, MySQL)
+stmt = select(users).where(
+    users.c.metadata['preferences']['theme'].astext == 'dark'
+)
+```
+
+### JSONB (PostgreSQL)
+
+```python
+from sqlalchemy.dialects.postgresql import JSONB
+
+# Binary JSON (PostgreSQL only, more efficient)
+Column('data', JSONB)
+
+# Supports indexing
+Column('data', JSONB, index=True)
+
+# GIN index for better performance
+Index('idx_data', users.c.data, postgresql_using='gin')
+```
+
+## UUID Type
+
+```python
+from sqlalchemy import UUID, String
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+import uuid
+
+# Generic UUID
+Column('id', UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+# PostgreSQL native UUID
+Column('id', PG_UUID(as_uuid=True), primary_key=True)
+
+# Stored as string
+Column('id', String(36), default=lambda: str(uuid.uuid4()))
+
+# Python type: uuid.UUID (if as_uuid=True) or str
+```
+
+**Usage:**
+```python
+import uuid
+
+# Generate UUID
+user_id = uuid.uuid4()
+
+with engine.begin() as conn:
+    conn.execute(
+        users.insert().values(id=user_id, name='alice')
+    )
+    
+    # Query by UUID
+    result = conn.execute(
+        select(users).where(users.c.id == user_id)
+    )
+```
+
+## Enum Type
+
+```python
+from sqlalchemy import Enum as SQLEnum
+from enum import Enum as PyEnum
+
+# Python enum class
+class Status(PyEnum):
+    PENDING = 'pending'
+    ACTIVE = 'active'
+    INACTIVE = 'inactive'
+    DELETED = 'deleted'
+
+# Use enum in column
+Column('status', SQLEnum(Status))
+
+# Or with string values
+Column('status', SQLEnum(
+    'pending', 'active', 'inactive', 'deleted',
+    name='status_enum'
+))
+
+# Maps to:
+# - PostgreSQL: CREATE TYPE (native enum)
+# - MySQL: ENUM
+# - SQLite: VARCHAR with CHECK constraint
+# - SQL Server: VARCHAR with CHECK constraint
+```
+
+**Parameters:**
+```python
+# Native enum (PostgreSQL)
+Column('status', SQLEnum(Status, name='status_enum', create_constraint=True))
+
+# VARCHAR with check constraint (portable)
+Column('status', SQLEnum(
+    Status,
+    native_enum=False,
+    create_constraint=True
+))
+
+# Length for VARCHAR
+Column('status', SQLEnum(Status, length=20))
+```
+
+## PickleType
+
+```python
+from sqlalchemy import PickleType
+
+# Store Python objects as pickled binary
+Column('python_object', PickleType)
+Column('cached_data', PickleType)
+
+# Python type: any picklable object
+```
+
+**Usage:**
+```python
+# Store complex Python objects
+data = {
+    'list': [1, 2, 3],
+    'dict': {'key': 'value'},
+    'tuple': (1, 'two', 3.0)
+}
+
+with engine.begin() as conn:
+    conn.execute(
+        cache.insert().values(python_object=data)
+    )
+    
+    result = conn.execute(select(cache.c.python_object))
+    retrieved = result.scalar()
+    print(retrieved)  # Original Python object
+```
+
+<Note>
+  PickleType is convenient but not recommended for production. Use JSON for better portability and debugging.
+</Note>
+
+## ARRAY Type (PostgreSQL)
+
+```python
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import Integer, String
+
+# Array of integers
+Column('scores', ARRAY(Integer))
+
+# Array of strings
+Column('tags', ARRAY(String(50)))
+
+# Multidimensional array
+Column('matrix', ARRAY(Integer, dimensions=2))
+
+# Python type: list
+```
+
+**Usage:**
+```python
+with engine.begin() as conn:
+    conn.execute(
+        posts.insert().values(
+            tags=['python', 'sqlalchemy', 'database']
+        )
+    )
+    
+    # Query with array operators
+    stmt = select(posts).where(
+        posts.c.tags.contains(['python'])
+    )
+    
+    stmt = select(posts).where(
+        posts.c.tags.overlap(['python', 'flask'])
+    )
+```
+
+## Type Comparison Table
+
+| SQLAlchemy Type | Python Type | PostgreSQL | MySQL | SQLite | SQL Server |
+|----------------|-------------|------------|-------|--------|------------|
+| Integer | int | INTEGER | INT | INTEGER | INT |
+| BigInteger | int | BIGINT | BIGINT | INTEGER | BIGINT |
+| SmallInteger | int | SMALLINT | SMALLINT | INTEGER | SMALLINT |
+| Numeric(10,2) | Decimal | NUMERIC | DECIMAL | NUMERIC | NUMERIC |
+| Float | float | REAL | FLOAT | REAL | FLOAT |
+| String(50) | str | VARCHAR(50) | VARCHAR(50) | VARCHAR(50) | VARCHAR(50) |
+| Text | str | TEXT | TEXT | TEXT | VARCHAR(MAX) |
+| Boolean | bool | BOOLEAN | BOOL | BOOLEAN | BIT |
+| DateTime | datetime | TIMESTAMP | DATETIME | TEXT | DATETIME2 |
+| Date | date | DATE | DATE | TEXT | DATE |
+| JSON | dict/list | JSON | JSON | TEXT | NVARCHAR(MAX) |
+| LargeBinary | bytes | BYTEA | BLOB | BLOB | VARBINARY(MAX) |
+| UUID | UUID/str | UUID | CHAR(32) | CHAR(32) | UNIQUEIDENTIFIER |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Types" href="/core/types-custom">
+    Create custom type decorators and user-defined types
+  </Card>
+  
+  <Card title="Type System" href="/core/types-overview">
+    Deep dive into type architecture
+  </Card>
+</CardGroup>
